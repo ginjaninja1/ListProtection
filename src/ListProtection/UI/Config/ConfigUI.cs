@@ -1,84 +1,25 @@
-﻿using Emby.Web.GenericEdit;
+﻿using System.ComponentModel;
+using Emby.Web.GenericEdit;
 using Emby.Web.GenericEdit.Elements;
-using Emby.Web.GenericEdit.Elements.List;
 using MediaBrowser.Model.Attributes;
-using System.Collections.Generic;
-using System.ComponentModel;
 
 namespace ListProtection.UI.Config
 {
+
     public class ConfigUI : EditableOptionsBase
     {
-        public override string EditorTitle => "Poster To Folder - Configuration";
+        public override string EditorTitle => "List Protection Settings";
 
-        public override string EditorDescription =>
-            "Copies each movie/show's poster image to folder.ext on disk when a folder image is missing.";
+        public override string EditorDescription => "Adjust background enforcement loops and backup parameters.";
 
-        public CaptionItem GeneralHeading { get; set; } = new CaptionItem("General");
+        public CaptionItem GeneralHeading { get; set; } = new CaptionItem("System Diagnostics");
 
-        [DisplayName("Enable Plugin")]
-        [Description("When disabled, the scheduled task exits immediately without processing any items.")]
-        [AutoPostBack("updateconfig", nameof(EnablePlugin))]
-        public bool EnablePlugin { get; set; } = true;
+        [DisplayName("Hourly Engine Monitor Loop")]
+        [Description("Run structural lock tasks cleanly across background cycles.")]
+        public bool EnableSync { get; set; } = false;
 
-        public CaptionItem LibraryFilterHeading { get; set; } =
-            new CaptionItem("Library / Path Filter");
-
-
-        /// <summary>
-        /// Persistent configuration data.
-        /// </summary>
-        [Browsable(false)]
-        public List<LibraryPathFilterItem> LibraryPaths { get; set; } =
-            new List<LibraryPathFilterItem>();
-
-
-        /// <summary>
-        /// GenericUI representation of LibraryPaths.
-        /// </summary>
-        public GenericItemList LibraryList { get; set; } =
-            new GenericItemList();
-
-        /*
-        public GenericItemList ScheduledTaskLink { get; set; } = new GenericItemList
-        {
-            new GenericListItem
-            {
-                PrimaryText = "Configure Scheduled Task",
-                SecondaryText = "",
-                Icon = IconNames.link,
-                Status = ItemStatus.Succeeded,
-                HyperLink = "/scheduledtasks",
-                HyperLinkTargetExternal = true
-            }
-        };
-        */
-        public GenericItemList ScheduledTaskLink { get; set; } = new GenericItemList();
-
-        public GenericItemList ForumLink { get; set; } = new GenericItemList
-        {
-            new GenericListItem
-            {
-                PrimaryText = "Community Forum",
-                SecondaryText = "Issues, Suggestions and Updates",
-                Icon = IconNames.link,
-                Status = ItemStatus.Succeeded,
-                HyperLink = "https://emby.media/community/topic/148589-plugin-poster-to-folder/",
-                HyperLinkTargetExternal = true
-            }
-        };
-
-        public GenericItemList GithubLink { get; set; } = new GenericItemList
-        {
-            new GenericListItem
-            {
-                PrimaryText = "Github repository",
-                SecondaryText = "",
-                Icon = IconNames.link,
-                Status = ItemStatus.Succeeded,
-                HyperLink = "https://github.com/ginjaninja1/ListProtection",
-                HyperLinkTargetExternal = true
-            }
-        };
+        [DisplayName("Backup Destination Path")]
+        [Description("Storage path where playlist configuration history logs are output.")]
+        public string BackupPath { get; set; } = "C:\\Backups";
     }
 }

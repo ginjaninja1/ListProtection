@@ -1,30 +1,45 @@
-﻿using System.Collections.Generic;
-using MediaBrowser.Model.Plugins;
-using ListProtection.UI.Config;
+﻿using MediaBrowser.Model.Plugins;
+using System.Collections.Generic;
 
-namespace ListProtection.Configuration
+namespace PlaylistProtection
 {
-    /// <summary>
-    /// The plugin's persisted settings - and the ONLY class involved in
-    /// persistence. This uses Emby's standard BasePlugin&lt;T&gt; mechanism:
-    /// Plugin.Instance.Configuration / SaveConfiguration() / UpdateConfiguration(),
-    /// which serializes to XML in the plugin configurations folder
-    /// automatically. No custom store, no hand-rolled JSON round-trip.
-    ///
-    /// This class has no UI/visual members, by construction - it isn't
-    /// rendered by GenericEdit and is never assigned as ContentData, so
-    /// there's nothing for it to accidentally leak. The config page instead
-    /// builds a separate view-model, ConfigUI, fresh from this class every
-    /// time it's shown - see ListProtection.UI.Config.ConfigViewBuilder.
-    /// </summary>
     public class PluginConfiguration : BasePluginConfiguration
     {
-        public bool EnablePlugin { get; set; } = true;
+        public int ConfidenceThreshold { get; set; } = 70;
+        public bool EnableAutoRepair { get; set; } = true;
 
         /// <summary>
-        /// The real, persisted library/path filter data.
+        /// Global multiplier applied to all rule scores.
+        /// Used to scale overall confidence sensitivity.
         /// </summary>
-        public List<LibraryPathFilterItem> LibraryPaths { get; set; } =
-            new List<LibraryPathFilterItem>();
+        public double GlobalWeightMultiplier { get; set; } = 1.0;
+
+        /// <summary>
+        /// Minimum confidence threshold required for a candidate to be considered valid.
+        /// Candidates below this score should be ignored for repair selection.
+        /// </summary>
+        public int MinimumConfidenceThreshold { get; set; } = 50;
+
+        /// <summary>
+        /// Enables verbose rule scoring output for debugging and diagnostics.
+        /// </summary>
+        public bool EnableDebugScoring { get; set; } = false;
+
+        /// <summary>
+        /// Optional per-rule weighting overrides.
+        /// Key = rule name, Value = weight multiplier.
+        /// </summary>
+        public Dictionary<string, double> RuleWeights { get; set; } = new Dictionary<string, double>();
+
+        /// <summary>
+        /// Maximum number of candidates to evaluate per MissingItem.
+        /// Prevents excessive library scanning cost.
+        /// </summary>
+        public int MaxCandidatesPerMissingItem { get; set; } = 50;
+
+        /// <summary>
+        /// When enabled, engine will log full per-rule breakdown per candidate.
+        /// </summary>
+        public bool LogRuleBreakdown { get; set; } = false;
     }
 }

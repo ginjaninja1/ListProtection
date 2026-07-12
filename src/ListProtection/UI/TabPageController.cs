@@ -1,9 +1,9 @@
-﻿using MediaBrowser.Model.Plugins;
+﻿using System;
+using System.Threading.Tasks;
+using ListProtection.UIBaseClasses;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
 using MediaBrowser.Model.Plugins.UI.Views;
-using ListProtection.UIBaseClasses;
-using System;
-using System.Threading.Tasks;
 
 namespace ListProtection.UI
 {

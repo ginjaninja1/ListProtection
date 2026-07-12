@@ -1,11 +1,17 @@
 ﻿using ListProtection.Storage;
 using ListProtection.UIBaseClasses.Views;
+using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
+using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ListProtection.UI.MissingMembers
@@ -17,6 +23,9 @@ namespace ListProtection.UI.MissingMembers
         private readonly PlaylistManagementStore _playlistStore;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
+        private readonly ILibraryManager _libraryManager;
+        private readonly IPlaylistManager _playlistManager;
+        private readonly IUserManager _userManager;
 
         public MissingMembersPageView(
             PluginInfo pluginInfo,
@@ -24,7 +33,10 @@ namespace ListProtection.UI.MissingMembers
             GroundTruthStore groundTruthStore,
             PlaylistManagementStore playlistStore,
             IJsonSerializer jsonSerializer,
-            ILogger logger)
+            ILogger logger,
+            ILibraryManager libraryManager,
+            IPlaylistManager playlistManager,
+            IUserManager userManager)
             : base(pluginInfo.Id)
         {
             _missingMembersStore = missingMembersStore;
@@ -32,6 +44,9 @@ namespace ListProtection.UI.MissingMembers
             _playlistStore = playlistStore;
             _jsonSerializer = jsonSerializer;
             _logger = logger;
+            _libraryManager = libraryManager;
+            _playlistManager = playlistManager;
+            _userManager = userManager;
 
             ShowSave = false;
             ShowBack = false;
@@ -44,10 +59,8 @@ namespace ListProtection.UI.MissingMembers
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
             _logger.Info(
-                "[MissingMembersPageView] RunCommand RAW | itemId={0} | commandId={1} | data={2}",
-                itemId ?? "(null)",
-                commandId ?? "(null)",
-                data ?? "(null)");
+                "[MissingMembersPageView] RunCommand | commandId={0}",
+                commandId ?? "(null)");
 
             try
             {
@@ -60,9 +73,10 @@ namespace ListProtection.UI.MissingMembers
 
                 if (commandId == "RepairMember")
                 {
-                    // PROBE — log raw data to understand what the child grid sends
-                    // Repair logic implemented after data shape is confirmed
-                    _logger.Info("[MissingMembersPageView] RepairMember RAW data: {0}", data);
+                    var repairUi = _jsonSerializer.DeserializeFromString<MissingMembersUI>(data);
+                    if (repairUi?.MissingMemberRows != null)
+                        ProcessRepairs(repairUi.MissingMemberRows);
+
                     ContentData = BuildOptions();
                     return Task.FromResult<IPluginUIView>(this);
                 }
@@ -92,6 +106,143 @@ namespace ListProtection.UI.MissingMembers
 
             ContentData = BuildOptions();
             return Task.FromResult<IPluginUIView>(this);
+        }
+
+        // ── Repair ─────────────────────────────────────────────────────────
+
+        private void ProcessRepairs(MissingMemberRow[] rows)
+        {
+            var user = _userManager.GetUserList(new UserQuery())[0];
+            var missingRecords = _missingMembersStore.Load();
+            var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();
+            var missingChanged = false;
+            var candidatesChanged = false;
+
+            // Resolve all playlists once — cast to Playlist
+            var allPlaylists = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Playlist" }
+            });
+
+            foreach (var masterRow in rows)
+            {
+                if (masterRow.IsSynthetic) continue;
+                if (masterRow.Candidates == null) continue;
+
+                foreach (var candidateRow in masterRow.Candidates)
+                {
+                    if (!candidateRow.Repair) continue;
+
+                    var parts = candidateRow.Key.Split('_');
+                    if (parts.Length < 3)
+                    {
+                        _logger.Warn("[MissingMembersPageView] RepairMember — unexpected Key: {0}", candidateRow.Key);
+                        continue;
+                    }
+
+                    var playlistId = parts[0];
+                    if (!long.TryParse(parts[1], out var missingInternalId) ||
+                        !long.TryParse(parts[2], out var candidateInternalId))
+                    {
+                        _logger.Warn("[MissingMembersPageView] RepairMember — could not parse Key: {0}", candidateRow.Key);
+                        continue;
+                    }
+
+                    // Find matching CandidateEntry to confirm the candidate exists in store
+                    CandidateEntry match = null;
+                    foreach (var c in candidateRecords)
+                    {
+                        if (c.PlaylistId == playlistId &&
+                            c.MissingMember?.InternalId == missingInternalId &&
+                            c.CandidateInternalId == candidateInternalId)
+                        {
+                            match = c;
+                            break;
+                        }
+                    }
+
+                    if (match == null)
+                    {
+                        _logger.Warn("[MissingMembersPageView] RepairMember — no CandidateEntry for Key: {0}", candidateRow.Key);
+                        continue;
+                    }
+
+                    // Resolve Playlist object by Guid
+                    var playlistGuid = new Guid(playlistId);
+                    var playlist = allPlaylists
+                        .FirstOrDefault(p => p.Id == playlistGuid) as Playlist;
+
+                    if (playlist == null)
+                    {
+                        _logger.Warn(
+                            "[MissingMembersPageView] RepairMember — playlist not found: {0}. Playlist recreation not yet implemented.",
+                            playlistId);
+                        continue;
+                    }
+
+                    _logger.Info(
+                        "[MissingMembersPageView] RepairMember — adding '{0}' (InternalId={1}) to playlist '{2}'",
+                        match.CandidateName,
+                        candidateInternalId,
+                        playlist.Name);
+
+                    try
+                    {
+                        _playlistManager.AddToPlaylist(
+                            playlist,
+                            new long[] { candidateInternalId },
+                            skipDuplicates: true,
+                            user: user,
+                            cancellationToken: CancellationToken.None);
+
+                        _logger.Info(
+                            "[MissingMembersPageView] RepairMember — AddToPlaylist succeeded for '{0}'",
+                            match.CandidateName);
+
+                        // Remove from MissingMembersStore
+                        for (var i = missingRecords.Count - 1; i >= 0; i--)
+                        {
+                            var r = missingRecords[i];
+                            if (r.PlaylistId == playlistId && r.Member?.InternalId == missingInternalId)
+                            {
+                                missingRecords.RemoveAt(i);
+                                missingChanged = true;
+                                break;
+                            }
+                        }
+
+                        // Remove all candidates for this missing member
+                        for (var i = candidateRecords.Count - 1; i >= 0; i--)
+                        {
+                            var c = candidateRecords[i];
+                            if (c.PlaylistId == playlistId && c.MissingMember?.InternalId == missingInternalId)
+                            {
+                                candidateRecords.RemoveAt(i);
+                                candidatesChanged = true;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.ErrorException(
+                            "[MissingMembersPageView] RepairMember — AddToPlaylist failed for '{0}'",
+                            ex,
+                            match.CandidateName);
+                    }
+                }
+            }
+
+            if (missingChanged)
+            {
+                _missingMembersStore.Save(missingRecords);
+                _logger.Info("[MissingMembersPageView] MissingMembersStore saved after repair");
+            }
+
+            if (candidatesChanged)
+            {
+                ListProtectionPlugin.Instance.CandidateStore.Save(candidateRecords);
+                _logger.Info("[MissingMembersPageView] CandidateStore saved after repair");
+            }
         }
 
         // ── Forget ─────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ using MediaBrowser.Common;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Drawing;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
@@ -20,38 +21,15 @@ namespace ListProtection
         private readonly IServerApplicationHost _applicationHost;
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
+        private readonly IPlaylistManager _playlistManager;
+        private readonly IUserManager _userManager;
         private List<IPluginUIPageController> _pages;
 
-        /// <summary>
-        /// Singleton accessor for use by IServerEntryPoint implementations that
-        /// are DI-resolved and cannot receive stores via constructor injection.
-        /// Set during construction — safe to read in Run() (called after all
-        /// plugins are constructed).
-        /// </summary>
         public static ListProtectionPlugin Instance { get; private set; }
 
-        /// <summary>
-        /// Exposes the PlaylistManagementStore singleton for use by
-        /// PlaylistMaintenanceService (accessed via Instance).
-        /// </summary>
         public PlaylistManagementStore PlaylistStore { get; }
-
-        /// <summary>
-        /// Exposes the GroundTruthStore singleton for use by
-        /// PlaylistMaintenanceService and MissingMemberDetectionService (accessed via Instance).
-        /// </summary>
         public GroundTruthStore GroundTruthStore { get; }
-
-        /// <summary>
-        /// Exposes the MissingMembersStore singleton for use by
-        /// MissingMemberDetectionService (accessed via Instance).
-        /// </summary>
         public MissingMembersStore MissingMembersStore { get; }
-
-        /// <summary>
-        /// Exposes the CandidateStore singleton for use by
-        /// CandidateDiscoveryTask (accessed via Instance).
-        /// </summary>
         public CandidateStore CandidateStore { get; }
 
         private readonly ConfigStore _configStore;
@@ -59,10 +37,14 @@ namespace ListProtection
         public ListProtectionPlugin(
             IServerApplicationHost applicationHost,
             ILogManager logManager,
-            ILibraryManager libraryManager)
+            ILibraryManager libraryManager,
+            IPlaylistManager playlistManager,
+            IUserManager userManager)
         {
             _applicationHost = applicationHost;
             _libraryManager = libraryManager;
+            _playlistManager = playlistManager;
+            _userManager = userManager;
             _logger = logManager.GetLogger(this.Name);
 
             PlaylistStore = new PlaylistManagementStore(applicationHost, _logger, this.Name + ".Playlist");
@@ -99,6 +81,8 @@ namespace ListProtection
                             MissingMembersStore,
                             _configStore,
                             _libraryManager,
+                            _playlistManager,
+                            _userManager,
                             _applicationHost.Resolve<ILogManager>())
                     };
                 }

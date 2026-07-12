@@ -5,6 +5,7 @@ using ListProtection.UI.PlaylistManagement;
 using ListProtection.UIBaseClasses;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
@@ -23,6 +24,8 @@ namespace ListProtection.UI
         private readonly MissingMembersStore _missingMembersStore;
         private readonly ConfigStore _configStore;
         private readonly ILibraryManager _libraryManager;
+        private readonly IPlaylistManager _playlistManager;
+        private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
         private readonly List<IPluginUIPageController> _tabPages = new List<IPluginUIPageController>();
@@ -35,6 +38,8 @@ namespace ListProtection.UI
             MissingMembersStore missingMembersStore,
             ConfigStore configStore,
             ILibraryManager libraryManager,
+            IPlaylistManager playlistManager,
+            IUserManager userManager,
             ILogManager logManager)
             : base(pluginInfo.Id)
         {
@@ -44,6 +49,8 @@ namespace ListProtection.UI
             _missingMembersStore = missingMembersStore;
             _configStore = configStore;
             _libraryManager = libraryManager;
+            _playlistManager = playlistManager;
+            _userManager = userManager;
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
             _logger = logManager.GetLogger(nameof(MainController));
 
@@ -69,7 +76,7 @@ namespace ListProtection.UI
                     _jsonSerializer,
                     _logger)));
 
-            // Tab 2 — Missing Members
+            // Tab 2 — Missing Members (with candidate child grid and repair)
             _tabPages.Add(new TabPageController(
                 pluginInfo,
                 "MissingMembers",
@@ -80,9 +87,12 @@ namespace ListProtection.UI
                     _groundTruthStore,
                     _playlistStore,
                     _jsonSerializer,
-                    _logger)));
+                    _logger,
+                    _libraryManager,
+                    _playlistManager,
+                    _userManager)));
 
-            // Tab 3 — Configuration (was Tab 2)
+            // Tab 3 — Configuration
             _tabPages.Add(new TabPageController(
                 pluginInfo,
                 "Configuration",

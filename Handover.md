@@ -162,37 +162,44 @@ IMPLEMENTED AND VERIFIED
   Fast path detection correctly recorded in MissingMembersStore         PROVEN (2026-06-27)
   Subsequent manual run deduplicates fast-path result correctly         PROVEN (2026-06-27)
 
-  ── TASK 6 — IN PROGRESS (2026-06-27) ─────────────────────────────────
+  ── TASK 6 — ALL PROVEN (2026-07-12) ──────────────────────────────────
 
-  CandidateDiscoveryProbeTask.cs  (Tasks/ — Step 1 field probe, now superseded)
+  CandidateDiscoveryProbeTask.cs  (Tasks/ — Step 1 field probe, now superseded — DELETE)
   CandidateEntry.cs               (Storage/ — Pattern B model)
   CandidateStore.cs               (Storage/ — Pattern B store)
   CandidateDiscoverer.cs          (EntryPoints/ — static scoring logic)
   CandidateDiscoveryTask.cs       (Tasks/ — IScheduledTask, namespace ListProtection.Tasks)
   Plugin.cs                       (CandidateStore singleton added)
 
-  Step 1 PROVEN (2026-06-27): Field probe run against 64 Audio items.
-  All BaseItem/Audio fields confirmed populated from GetItemList:
-    Name, Path, FileName, FileNameWithoutExtension, Album, RunTimeTicks,
-    IndexNumber, ProductionYear — all populated.
-    Artists, AlbumArtists — populated (lazy-load concern was a non-issue).
-    ParentIndexNumber — null in test library (single-disc albums).
-  Probe target: 'New Heights' | InternalId=7275
-    Path: D:\Music Test\A Fine Frenzy\[2009] Bomb in a Birdcage\02. New Heights.flac
-  Expected best candidate: InternalId=20474
-    Path: D:\Music Test\New Folder Location\02. New Heights.flac
-    Expected score: 160 (FilenameStemExact:100 + NameExact:60)
+  CandidateDiscoveryTask run manually from Emby dashboard               PROVEN (2026-07-12)
+  69,714 Audio items queried from library in ~0.9s                      PROVEN (2026-07-12)
+  137 candidates written across 11 missing members                      PROVEN (2026-07-12)
+  List Protection.Candidates.json written to PluginConfigurationsPath   PROVEN (2026-07-12)
+  Deduplication correct — 2 pre-existing entries skipped on re-run      PROVEN (2026-07-12)
+  Score=180 candidate always correct for each missing member:
+    New Heights    InternalId=1254313  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Blow Away      InternalId=1254315  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Happier        InternalId=1254316  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Swan Song      InternalId=1254317  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Think of You   InternalId=1254304  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Elements       InternalId=1254318  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    The World Without InternalId=1254319 Score=180 [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Bird of the Summer InternalId=1254320 Score=180 [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Stood Up       InternalId=1254321  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    The Beacon     InternalId=1254322  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
+    Pinesong       InternalId=1254329  Score=180  [FilenameStemExact:100, NameExact:60, ParentFolderMatch:20]
 
-  Step 2 PROVEN (2026-06-27): Fields confirmed — scoring logic written.
-
-  Step 3 PENDING: CandidateDiscoveryTask not yet run.
-    CandidateStore not yet written.
-    Results not yet verified.
+  SCORING BEHAVIOUR NOTES (PROVEN 2026-07-12):
+    ParentFolderMatch:20 noise observed — sibling tracks from same album all score 20.
+    This is expected and by design. Score=180 candidate is unambiguous in every case.
+    Score < 100 candidates are noise. UI must filter to Score >= 100 by default.
+    FilenameStemNormalized:70 fires on tracks with no "NN. " prefix in other libraries
+      (Swan Song InternalId=1297968, 1300189 each Score=130 — correct secondary matches).
 
 NOT IMPLEMENTED
   IScheduledTask post-library-scan trigger — DEFERRED (future task)
-  Confidence evaluation integration
   Repair workflow
+  Candidates UI (Tab 3)
 
 PROTOTYPE / UNVALIDATED CODE
 =====================================================
@@ -203,7 +210,7 @@ Present but UNVALIDATED
   MissingItem model (old — superseded by MissingMemberEntry)
   CandidateItem model
   Confidence rules (FilenameMatchRule, PathMatchRule)
-  CandidateDiscoveryProbeTask.cs — superseded by CandidateDiscoveryTask; can be deleted
+  CandidateDiscoveryProbeTask.cs — superseded by CandidateDiscoveryTask; DELETE THIS FILE
   CandidateRefreshTask.cs — unknown content, not reviewed or integrated
 
 RULE: These components are NOT integrated, NOT verified, NOT functional
@@ -234,7 +241,7 @@ STORES (constructed in Plugin.cs as singletons, passed by constructor injection
   GroundTruthStore         — file: List Protection.GroundTruth.json
   ConfigStore              — file: List Protection.Configuration.json
   MissingMembersStore      — file: List Protection.MissingMembers.json
-  CandidateStore           — file: List Protection.Candidates.json       (Task 6)
+  CandidateStore           — file: List Protection.Candidates.json
 
   Stores are singletons — constructed once in Plugin.cs, shared across all
   navigations via MainController and IServerEntryPoint implementations.
@@ -263,11 +270,11 @@ FILE LAYOUT (ACTUAL)
     PlaylistMaintenanceService.cs   <- production ground truth maintenance
     MissingMemberDetectionService.cs <- production missing member detection + fast path
     MissingMemberDetector.cs        <- static shared detection logic
-    CandidateDiscoverer.cs          <- static shared candidate scoring logic (Task 6)
+    CandidateDiscoverer.cs          <- static shared candidate scoring logic
   Tasks/
     DetectMissingMembersTask.cs     <- IScheduledTask — manual run, namespace ListProtection.Tasks
-    CandidateDiscoveryTask.cs       <- IScheduledTask — manual run, namespace ListProtection.Tasks (Task 6)
-    CandidateDiscoveryProbeTask.cs  <- probe only — superseded, can be deleted
+    CandidateDiscoveryTask.cs       <- IScheduledTask — manual run, namespace ListProtection.Tasks
+    CandidateDiscoveryProbeTask.cs  <- DELETE — superseded, probe only
     CandidateRefreshTask.cs         <- unknown, unreviewed
   UI/
     MainController.cs
@@ -280,6 +287,10 @@ FILE LAYOUT (ACTUAL)
       MissingMemberRow.cs
       MissingMembersUI.cs
       MissingMembersPageView.cs
+    Candidates/                     <- Task 7 — TO BE CREATED
+      CandidateRow.cs
+      CandidatesUI.cs
+      CandidatesPageView.cs
     Config/
       ConfigUI.cs                   <- placeholder, acceptable
       ConfigPageView.cs             <- placeholder, acceptable
@@ -291,8 +302,8 @@ FILE LAYOUT (ACTUAL)
     ConfigStore.cs                  <- Pattern A, acceptable
     MissingMembersStore.cs          <- Pattern B
     MissingMemberEntry.cs
-    CandidateStore.cs               <- Pattern B (Task 6)
-    CandidateEntry.cs               <- (Task 6)
+    CandidateStore.cs               <- Pattern B
+    CandidateEntry.cs
 
 
 EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
@@ -483,6 +494,41 @@ EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
   Constructor injection of ILibraryManager and ILogManager works normally.
   Namespace: ListProtection.Tasks   CONFIRMED (from DetectMissingMembersTask.cs)
 
+--- IPlaylistManager (FROM DLL — Task 7) ---
+
+  Confirmed interface members relevant to repair:
+
+  void AddToPlaylist(long playlistId, long[] itemIds, User user)
+    — fire-and-forget overload. playlistId = playlist InternalId (long).
+      itemIds = array of candidate InternalIds to add.
+      User parameter required — see USER RESOLUTION below.
+
+  Task<AddToPlaylistResult> AddToPlaylist(Playlist playlist, long[] itemIds,
+      bool skipDuplicates, User user, CancellationToken cancellationToken)
+    — async overload with duplicate guard. Preferred for repair workflow.
+      skipDuplicates = true recommended — guards against double-add.
+
+  Task RemoveFromPlaylist(long playlistId, long[] entryIds)
+  Task RemoveFromPlaylist(Playlist playlist, long[] entryIds)
+    — entryIds are ListItemEntryIds (not InternalIds).
+
+  IPlaylistManager must be constructor-injected. It is a standard DI service.
+  Inject into MainController (already has ILibraryManager pattern to follow).
+  Pass to CandidatesPageView via constructor.
+
+  USER RESOLUTION (AGREED — not yet proven):
+    AddToPlaylist requires a User object.
+    IUserManager.GetUsers() returns all users — take first admin or first user.
+    IUserManager must be constructor-injected alongside IPlaylistManager.
+    Exact method signature to be confirmed from DLL before use.
+    PROBE REQUIRED: log IUserManager.GetUsers() result before calling AddToPlaylist.
+
+  PLAYLIST OBJECT RESOLUTION FOR ASYNC OVERLOAD (AGREED — not yet proven):
+    Async overload takes Playlist (not long). Resolve via:
+      GetItemList(IncludeItemTypes=["Playlist"]) filtered by InternalId or Guid.
+      Cast result to Playlist.
+    Same pattern already used in CaptureMembers and MissingMemberDetector.
+
 
 STORAGE ARCHITECTURE
 =====================================================
@@ -534,11 +580,11 @@ CURRENT STORES
                Where clause. Per-playlist lookup is equally simple.
     Status: PROVEN (2026-06-27)
 
-  CandidateStore (Pattern B)                                            (Task 6)
+  CandidateStore (Pattern B)
     File: List Protection.Candidates.json
     API: Load() -> List<CandidateEntry>, Save(List<CandidateEntry>)
     Structure: FLAT LIST, sorted by Score descending on save
-    Status: WRITTEN — not yet run
+    Status: PROVEN (2026-07-12) — 137 candidates written
 
 GROUND TRUTH ENTRY SHAPE
 
@@ -567,7 +613,7 @@ MISSING MEMBER ENTRY SHAPE
     Member          GroundTruthMember — full snapshot from ground truth at detection time
                                         Member.Id (Guid "N") is cross-playlist identity key
 
-CANDIDATE ENTRY SHAPE                                                   (Task 6)
+CANDIDATE ENTRY SHAPE
 
   CandidateEntry
     PlaylistId            string            — Guid "N", matches key in GroundTruthStore
@@ -581,10 +627,9 @@ CANDIDATE ENTRY SHAPE                                                   (Task 6)
     MatchedSignals        List<string>      — human-readable signal breakdown
     DiscoveredAt          DateTime          — UTC
 
-CANDIDATE SCORING SIGNALS (AGREED — not yet runtime proven)
+CANDIDATE SCORING SIGNALS (PROVEN — 2026-07-12)
 
-  Signals are derived from GroundTruthMember.Name and .Path only
-  (those are the only fields captured in ground truth).
+  Signals are derived from GroundTruthMember.Name and .Path only.
 
   FilenameStemExact      100 — candidate FileNameWithoutExtension == GT path stem (case-insensitive)
   FilenameStemNormalized  70 — after stripping "NN. " track prefix, stems match
@@ -594,6 +639,7 @@ CANDIDATE SCORING SIGNALS (AGREED — not yet runtime proven)
                                (year prefix "[YYYY] " stripped before comparison)
 
   Minimum score to record: > 0
+  UI display threshold: Score >= 100 (filters ParentFolderMatch-only noise)
   Store sorted by Score descending on save.
   Deduplication: (PlaylistId, MissingMember.InternalId, CandidateInternalId) triple.
 
@@ -667,7 +713,7 @@ MISSING MEMBER KEY FORMAT
   Synthetic row key:  "synthetic_{PlaylistId}"
     RunCommand identifies these by IsSynthetic == true and skips entirely.
 
-CANDIDATE DISCOVERY LOGIC (CandidateDiscoverer — Task 6 — WRITTEN, NOT YET PROVEN)
+CANDIDATE DISCOVERY LOGIC (CandidateDiscoverer — Task 6 — PROVEN 2026-07-12)
 
   RunDiscovery(targetPlaylistIdN, libraryManager, logger):
     1. Load MissingMembersStore, GroundTruthStore, CandidateStore
@@ -680,7 +726,30 @@ CANDIDATE DISCOVERY LOGIC (CandidateDiscoverer — Task 6 — WRITTEN, NOT YET P
     4. If any new candidates: sort store by Score desc, save CandidateStore
 
   Trigger paths:
-    Manual (IScheduledTask): CandidateDiscoveryTask   WRITTEN — not yet proven
+    Manual (IScheduledTask): CandidateDiscoveryTask   PROVEN (2026-07-12)
+
+REPAIR LOGIC (Task 7 — AGREED, not yet implemented)
+
+  RepairMember command flow:
+    1. Parse CandidatesUI from RunCommand data
+    2. Find rows where Repair == true
+    3. For each repair row (key = "{PlaylistId}_{MissingMember.InternalId}_{CandidateInternalId}"):
+         a. Resolve playlist Playlist object via GetItemList(IncludeItemTypes=Playlist)
+         b. Resolve User via IUserManager (see USER RESOLUTION above — PROBE FIRST)
+         c. Call IPlaylistManager.AddToPlaylist(playlist, [CandidateInternalId],
+                skipDuplicates: true, user, CancellationToken.None)
+         d. On success:
+              Remove MissingMemberEntry from MissingMembersStore (by PlaylistId+InternalId)
+              Remove all CandidateEntries for same (PlaylistId, MissingMember.InternalId)
+              Ground truth will self-update via PlaylistMaintenanceService
+                (PlaylistItemsAdded -> ItemUpdated -> new GroundTruthMember written)
+              Do NOT manually update GroundTruthStore — let the event chain handle it
+    4. Save stores, rebuild view
+
+  CRITICAL: Do NOT update GroundTruthStore manually on repair.
+    The existing PlaylistMaintenanceService event chain (PlaylistItemsAdded ->
+    ItemUpdated -> readback -> write) is already proven to handle this correctly.
+    Manually writing to ground truth would race with the event chain.
 
 
 VERIFIED EMBY BEHAVIOURAL LEARNINGS
@@ -842,6 +911,18 @@ These behaviours have been empirically tested and confirmed.
   Manual task also ran at 05:40:17 and 05:41:51 with correct dedup of 3 earlier entries.
   Full Task 5a cycle PROVEN end-to-end.
 
+--- CANDIDATE DISCOVERY PROOF (New Heights et al., 2026-07-12, Task 6) ---
+
+  CandidateDiscoveryTask run manually from Emby dashboard.
+  Library: 69,714 Audio items queried in ~0.9s.
+  11 missing members processed. 137 candidates written to CandidateStore.
+  Every missing member found its exact match at Score=180.
+  New Heights (InternalId=1254313) found in new folder location — Score=180.
+  ParentFolderMatch:20 noise confirmed — sibling album tracks score 20 each.
+  Score >= 100 filter will eliminate all noise candidates.
+  Deduplication: 2 pre-existing entries from prior partial run skipped correctly.
+  Full Task 6 cycle PROVEN end-to-end.
+
 --- REMOVE EVENT DOES NOT FIRE ItemUpdated ---
 
   When an item is removed via UI, only PlaylistItemsRemoved fires.
@@ -896,9 +977,6 @@ These behaviours have been empirically tested and confirmed.
     Path: D:\Music Test\A Fine Frenzy\[2009] Bomb in a Birdcage\02. New Heights.flac
   Ground truth exclusion: 11 items excluded (playlist members), 1 excluded (the target itself).
   5 candidates logged raw. All fields confirmed populated — see AUDIO ITEM FIELDS above.
-  Expected best candidate: InternalId=20474
-    Path: D:\Music Test\New Folder Location\02. New Heights.flac
-    Expected score: 160 (FilenameStemExact:100 + NameExact:60)
 
 
 UI DESIGN
@@ -917,9 +995,19 @@ TAB 2 - MISSING MEMBERS (COMPLETE — PROVEN 2026-06-27)
   Synthetic placeholder row per protected playlist with no missing members
     ("No missing members" in MemberName column, IsSynthetic=true, Forget ignored)
 
-TAB 3 - CONFIGURATION (FUTURE — currently placeholder, was Tab 2)
+TAB 3 - CANDIDATES / REPAIR (Task 7 — TO BE IMPLEMENTED)
+  Grid grouped by missing member (MissingMemberName column)
+  Filtered to Score >= 100 by default (suppresses ParentFolderMatch noise)
+  Columns: MissingMemberName, PlaylistName, CandidateName, CandidatePath,
+           Score, MatchedSignals, Repair (checkbox)
+  Repair column — cell-edit checkbox, fires RepairMember command
+  On repair: add candidate to playlist via IPlaylistManager, clean stores
+  Synthetic placeholder rows for missing members with no qualifying candidates
+
+TAB 4 - CONFIGURATION (FUTURE — currently Tab 3 placeholder)
   Plugin settings
   Tuning options
+  Note: Tab 3 must be repurposed to Candidates, Config becomes Tab 4
 
 UNPROTECT BEHAVIOUR (PRODUCTION — FUTURE):
   Remove playlist from PlaylistManagementStore
@@ -931,27 +1019,82 @@ CURRENT TASK (AUTHORITATIVE)
 =====================================================
 
 TASK
-  TASK 6 — CANDIDATE DISCOVERY
+  TASK 7 — CANDIDATES UI AND REPAIR WORKFLOW
 
 STATUS
-  In progress. Step 3 pending: CandidateDiscoveryTask not yet run.
+  Not started. All prerequisite data (CandidateStore) is proven and populated.
 
-WHAT REMAINS
+WHAT TO BUILD
 
-  Run CandidateDiscoveryTask from the Emby dashboard.
-  Verify log output — specifically:
-    - 'New Heights' (InternalId=7275) processed as missing member
-    - InternalId=20474 recorded as candidate with Score=160
-    - Signals: FilenameStemExact:100 + NameExact:60
-    - No other candidates recorded for this missing member
-  Verify List Protection.Candidates.json written to PluginConfigurationsPath.
-  Record results in this document.
-  Define Task 7.
+  Step 1 — PROBE IUserManager before writing any repair code.
+    Inject IUserManager into MainController.
+    In a probe IServerEntryPoint or temporary log in CandidatesPageView,
+    call IUserManager.GetUsers() and log:
+      - number of users returned
+      - each user's Name, Id, IsAdministrator (or equivalent)
+    Confirm the method signature from DLL before implementing.
+    Goal: establish which User object to pass to AddToPlaylist.
+    DO NOT call AddToPlaylist until User resolution is confirmed.
+
+  Step 2 — Build CandidateRow.cs
+    Properties (pattern: mirror MissingMemberRow.cs):
+      Key               string   — "{PlaylistId}_{MissingMember.InternalId}_{CandidateInternalId}"
+      PlaylistName      string   — display only
+      MissingMemberName string   — GT member Name
+      MissingMemberPath string   — GT member Path (for disambiguation)
+      CandidateName     string   — candidate item Name
+      CandidatePath     string   — candidate item Path
+      Score             int      — composite score
+      Signals           string   — MatchedSignals joined as display string
+      Repair            bool     — action checkbox
+      IsSynthetic       bool     — for placeholder rows (hidden column)
+
+  Step 3 — Build CandidatesUI.cs
+    DxDataGrid with:
+      editObject = new CandidateRow(), keyExpr = "Key"
+      showFilterRow = true, showHeaderFilter = true
+      editing.mode = cell, allowUpdating = true
+      onChangeCommand = "RepairMember"
+    Column post-processing:
+      "Key", "IsSynthetic"     -> visible = false, allowEditing = false
+      "MissingMemberName"      -> groupIndex = 0, showWhenGrouped = false,
+                                  autoExpandGroup = false, allowEditing = false,
+                                  allowHeaderFiltering = true
+      "PlaylistName"           -> allowEditing = false, allowHeaderFiltering = true
+      "MissingMemberPath"      -> allowEditing = false
+      "CandidateName"          -> allowEditing = false
+      "CandidatePath"          -> allowEditing = false
+      "Score"                  -> allowEditing = false, sortIndex = 0, sortOrder = "desc"
+      "Signals"                -> allowEditing = false
+      "Repair"                 -> leave editable
+
+  Step 4 — Build CandidatesPageView.cs
+    Constructor: inject ILibraryManager, IPlaylistManager, IUserManager (after probe)
+    BuildContentData():
+      Load CandidateStore, filter to Score >= 100
+      Group by (PlaylistId, MissingMember.InternalId) — take top candidate per group
+        OR show all qualifying candidates per missing member (decide after seeing volume)
+      Build CandidateRow per entry
+      Add synthetic placeholder per missing member with no qualifying candidates
+    RunCommand("RepairMember"):
+      Follow REPAIR LOGIC spec above exactly.
+      Log all intermediate values before acting (probe pattern).
+
+  Step 5 — Wire into MainController
+    Add Tab 3 = Candidates (new CandidatesPageView)
+    Move existing Config tab to Tab 4
+    Inject IPlaylistManager and IUserManager into MainController constructor
 
 DEFINITION OF DONE
-  CandidateDiscoveryTask run and verified
-  Candidate data written to CandidateStore
-  Results recorded in this document
+  IUserManager.GetUsers() probed and User resolution confirmed
+  CandidateRow, CandidatesUI, CandidatesPageView built
+  Tab 3 renders candidate grid in Emby UI
+  Repair checkbox fires RepairMember command
+  RepairMember calls AddToPlaylist successfully
+  Repaired member reappears in playlist (verified in Emby UI)
+  MissingMembersStore and CandidateStore cleaned up correctly
+  PlaylistMaintenanceService picks up the add event and updates GroundTruth
+  All results recorded in this document
   Next task defined
 
 
@@ -964,9 +1107,10 @@ IMPLEMENTATION ROADMAP (ORDERED)
 4. Ground truth maintenance (add/remove events)       <- COMPLETE
 5. Missing member detection                           <- COMPLETE (proven 2026-06-27)
 5a. Fast path activation + scheduled task             <- COMPLETE (proven 2026-06-27)
-6. Candidate discovery                                <- IN PROGRESS (Step 3 pending)
-7. Confidence evaluation integration
-8. Repair workflow
+6. Candidate discovery                                <- COMPLETE (proven 2026-07-12)
+7. Candidates UI + repair workflow                    <- CURRENT TASK
+8. Post-library-scan trigger (deferred)
+9. Configuration UI (deferred)
 
 
 SESSION COMPLETION RULE
@@ -995,9 +1139,7 @@ FUTURE IDEAS (NOT MVP)
   Playlist recovery from Emby m3u files
   Advanced matching rules
   Improved confidence scoring
-  Automated repair workflows
   Additional metadata enrichment
-  Tab 3: Configuration UI (currently placeholder)
   Post-library-scan trigger for DetectMissingMembersTask (natural fit —
     add a TaskTriggerInfo for AfterLibraryScan once trigger type is confirmed
     from DLL. Current manual-only approach is correct until proven.)
@@ -1009,7 +1151,14 @@ FUTURE IDEAS (NOT MVP)
   cleanup if this becomes observable.
 
   MissingMemberDetectionService — timer interval (60 min) is a constant.
-  Future: expose via ConfigStore so user can tune via Tab 3.
+  Future: expose via ConfigStore so user can tune via Tab 4.
+
+  Show all candidates vs top-only per missing member — current plan is
+  Score >= 100 filter with all qualifying shown. If volume is high,
+  consider top-1 default with expand option.
+
+  CandidateRefreshTask.cs — file exists but content is unknown and
+  unreviewed. Review and either integrate or delete before Task 7 ships.
 
 These are explicitly deferred.
 

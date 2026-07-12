@@ -15,10 +15,13 @@ namespace ListProtection.UI.MissingMembers
     ///   RunCommand identifies these by IsSynthetic == true and skips them.
     ///
     /// Column post-processing in MissingMembersUI.Build:
-    ///   Key, IsSynthetic   → visible = false
-    ///   PlaylistName       → groupIndex = 0, showWhenGrouped = false, allowEditing = false
-    ///   Forget             → allowEditing = true (only editable column)
-    ///   All others         → allowEditing = false
+    ///   Key, IsSynthetic, Candidates → visible = false
+    ///   PlaylistName                 → groupIndex = 0, showWhenGrouped = false, allowEditing = false
+    ///   Forget                       → allowEditing = true (only editable column)
+    ///   All others                   → allowEditing = false
+    ///
+    /// Candidates is marked isSecondaryGridDataSource = true in MissingMembersUI.Build
+    /// and provides child rows for the master-detail expand.
     /// </summary>
     public class MissingMemberRow
     {
@@ -42,5 +45,8 @@ namespace ListProtection.UI.MissingMembers
 
         [DisplayName("IsSynthetic")]
         public bool IsSynthetic { get; set; }
+
+        [DisplayName("Candidates")]
+        public CandidateRow[] Candidates { get; set; } = new CandidateRow[0];
     }
 }

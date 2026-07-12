@@ -1162,5 +1162,41 @@ FUTURE IDEAS (NOT MVP)
 
 These are explicitly deferred.
 
+AI SESSION BOOTSTRAP INSTRUCTIONS
+=====================================================
+
+These instructions exist because AI assistants consistently waste time at
+session start trying to read this file via web search or web fetch tools,
+both of which fail. Follow this procedure exactly.
+
+READING THIS FILE
+  The only method that works is bash curl against raw.githubusercontent.com.
+  The default branch is MASTER (not main) — CONFIRMED by repository owner.
+
+  curl -sL "https://raw.githubusercontent.com/ginjaninja1/ListProtection/master/Handover.md"
+
+  Do not attempt:
+    web_search for the file — returns unrelated results
+    web_fetch of github.com URLs — blocked unless URL appeared in prior search
+    web_fetch of raw.githubusercontent.com — same restriction
+    GitHub API (api.github.com) — rate-limited without auth token
+
+  To discover branch name or file list if needed:
+    curl -sL "https://github.com/ginjaninja1/ListProtection" \
+      | grep -oP 'href="/ginjaninja1/ListProtection/blob/[^"]+'
+
+WRITING THIS FILE
+  This document cannot be pushed to GitHub from the AI session.
+  Workflow:
+    1. AI produces updated Handover.md as a file artifact for download
+    2. User manually commits and pushes to the repository
+  Do not attempt git operations or GitHub API writes.
+
+READING SOURCE FILES
+  To read any other file in the repository:
+    curl -sL "https://raw.githubusercontent.com/ginjaninja1/ListProtection/master/PATH/TO/FILE"
+  Replace PATH/TO/FILE with the relative path from repo root.
+  Branch is master.
+
 =====================================================
 END OF DOCUMENT

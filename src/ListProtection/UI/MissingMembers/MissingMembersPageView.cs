@@ -10,27 +10,6 @@ using System.Threading.Tasks;
 
 namespace ListProtection.UI.MissingMembers
 {
-    /// <summary>
-    /// View for Tab 2 — Missing Members.
-    /// Mirrors PlaylistManagementPageView pattern exactly.
-    ///
-    /// BuildOptions projection:
-    ///   1. Load protected playlist IDs from PlaylistManagementStore.
-    ///   2. Load ground truth entries to get playlist names for active protected playlists.
-    ///   3. Load missing member records from MissingMembersStore.
-    ///   4. For each active protected playlist:
-    ///        If has missing members → emit one MissingMemberRow per record.
-    ///        If no missing members  → emit one synthetic placeholder row.
-    ///
-    /// RunCommand (commandId = "ForgetMember"):
-    ///   Full ContentData arrives as MissingMembersUI. Find rows where Forget == true
-    ///   and IsSynthetic == false. For each:
-    ///     - Remove from MissingMembersStore.
-    ///     - Remove matching Member from GroundTruthStore entry (by InternalId).
-    ///   Save both stores. Rebuild view.
-    ///
-    /// Store is always the source of truth. View is always a pure projection.
-    /// </summary>
     internal class MissingMembersPageView : PluginPageView
     {
         private readonly MissingMembersStore _missingMembersStore;
@@ -79,6 +58,15 @@ namespace ListProtection.UI.MissingMembers
                     return Task.FromResult<IPluginUIView>(this);
                 }
 
+                if (commandId == "RepairMember")
+                {
+                    // PROBE — log raw data to understand what the child grid sends
+                    // Repair logic implemented after data shape is confirmed
+                    _logger.Info("[MissingMembersPageView] RepairMember RAW data: {0}", data);
+                    ContentData = BuildOptions();
+                    return Task.FromResult<IPluginUIView>(this);
+                }
+
                 if (commandId != "ForgetMember")
                 {
                     _logger.Warn("[MissingMembersPageView] RunCommand — unexpected commandId: {0}", commandId);
@@ -121,7 +109,6 @@ namespace ListProtection.UI.MissingMembers
                 if (row.IsSynthetic) continue;
                 if (string.IsNullOrEmpty(row.Key)) continue;
 
-                // Key format: "{PlaylistId (32 chars)}_{InternalId}"
                 if (row.Key.Length < 34 || row.Key[32] != '_')
                 {
                     _logger.Warn("[MissingMembersPageView] ForgetMember — unexpected Key format: {0}", row.Key);
@@ -143,7 +130,6 @@ namespace ListProtection.UI.MissingMembers
                     internalId,
                     row.MemberName ?? "(null)");
 
-                // Remove from MissingMembersStore
                 for (var i = missingRecords.Count - 1; i >= 0; i--)
                 {
                     var r = missingRecords[i];
@@ -156,11 +142,10 @@ namespace ListProtection.UI.MissingMembers
 
                         missingRecords.RemoveAt(i);
                         missingChanged = true;
-                        break; // Each PlaylistId+InternalId combination is unique in the flat list
+                        break;
                     }
                 }
 
-                // Remove from GroundTruthStore — member is forgotten entirely
                 if (groundTruth.TryGetValue(playlistId, out var entry) && entry.Members != null)
                 {
                     for (var i = entry.Members.Count - 1; i >= 0; i--)
@@ -214,11 +199,13 @@ namespace ListProtection.UI.MissingMembers
             var protectedIds = _playlistStore.Load();
             var groundTruth = _groundTruthStore.Load();
             var missingRecords = _missingMembersStore.Load();
+            var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();
 
             _logger.Info(
-                "[MissingMembersPageView] BuildRows — {0} protected playlist(s), {1} missing record(s)",
+                "[MissingMembersPageView] BuildRows — {0} protected playlist(s), {1} missing record(s), {2} candidate(s)",
                 protectedIds.Count,
-                missingRecords.Count);
+                missingRecords.Count,
+                candidateRecords.Count);
 
             var rows = new List<MissingMemberRow>();
 
@@ -227,7 +214,6 @@ namespace ListProtection.UI.MissingMembers
                 if (!groundTruth.TryGetValue(playlistId, out var entry) || !entry.IsActive)
                     continue;
 
-                // Collect missing rows for this playlist
                 var playlistMissingRows = new List<MissingMemberRow>();
 
                 foreach (var record in missingRecords)
@@ -243,7 +229,8 @@ namespace ListProtection.UI.MissingMembers
                         Path = record.Member.Path ?? string.Empty,
                         DetectedAt = record.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
                         Forget = false,
-                        IsSynthetic = false
+                        IsSynthetic = false,
+                        Candidates = BuildCandidateRows(playlistId, record.Member.InternalId, candidateRecords)
                     });
                 }
 
@@ -253,7 +240,6 @@ namespace ListProtection.UI.MissingMembers
                 }
                 else
                 {
-                    // Synthetic placeholder row — no missing members for this playlist
                     rows.Add(new MissingMemberRow
                     {
                         Key = "synthetic_" + playlistId,
@@ -262,12 +248,44 @@ namespace ListProtection.UI.MissingMembers
                         Path = string.Empty,
                         DetectedAt = string.Empty,
                         Forget = false,
-                        IsSynthetic = true
+                        IsSynthetic = true,
+                        Candidates = new CandidateRow[0]
                     });
                 }
             }
 
             _logger.Info("[MissingMembersPageView] BuildRows — emitting {0} row(s)", rows.Count);
+
+            return rows.ToArray();
+        }
+
+        private CandidateRow[] BuildCandidateRows(string playlistId, long missingInternalId, List<CandidateEntry> allCandidates)
+        {
+            var rows = new List<CandidateRow>();
+
+            foreach (var c in allCandidates)
+            {
+                if (c.PlaylistId != playlistId) continue;
+                if (c.MissingMember?.InternalId != missingInternalId) continue;
+
+                rows.Add(new CandidateRow
+                {
+                    Key = playlistId + "_" + missingInternalId + "_" + c.CandidateInternalId,
+                    CandidateName = c.CandidateName ?? "(unnamed)",
+                    CandidatePath = c.CandidatePath ?? string.Empty,
+                    Score = c.Score,
+                    Signals = string.Join(", ", c.MatchedSignals ?? new List<string>()),
+                    Repair = false
+                });
+            }
+
+            rows.Sort((a, b) => b.Score.CompareTo(a.Score));
+
+            _logger.Info(
+                "[MissingMembersPageView] BuildCandidateRows — playlist={0} | missingId={1} | candidates={2}",
+                playlistId,
+                missingInternalId,
+                rows.Count);
 
             return rows.ToArray();
         }

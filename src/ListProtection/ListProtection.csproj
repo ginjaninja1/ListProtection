@@ -23,6 +23,10 @@
 		<Optimize>True</Optimize>
 	</PropertyGroup>
 	<ItemGroup>
+	  <Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
+	  <Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
+	</ItemGroup>
+	<ItemGroup>
 	  <None Remove="Handover.md" />
 	  <None Remove="Readme.md" />
 	</ItemGroup>

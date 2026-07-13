@@ -1,4 +1,6 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Services;
+using ListProtection.Storage;
+using ListProtection.UI.MissingMembers;
 using ListProtection.UIBaseClasses.Views;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -9,6 +11,7 @@ using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ListProtection.UI.PlaylistManagement
@@ -20,6 +23,7 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ILibraryManager _libraryManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
+        private readonly PlaylistRepairService _repairService;
 
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
@@ -27,7 +31,8 @@ namespace ListProtection.UI.PlaylistManagement
             GroundTruthStore groundTruthStore,
             ILibraryManager libraryManager,
             IJsonSerializer jsonSerializer,
-            ILogger logger)
+            ILogger logger,
+            PlaylistRepairService repairService)
             : base(pluginInfo.Id)
         {
             _store = store;
@@ -35,6 +40,7 @@ namespace ListProtection.UI.PlaylistManagement
             _libraryManager = libraryManager;
             _jsonSerializer = jsonSerializer;
             _logger = logger;
+            _repairService = repairService;
 
             ShowSave = false;
             ShowBack = false;
@@ -44,13 +50,12 @@ namespace ListProtection.UI.PlaylistManagement
 
         // ── RunCommand ─────────────────────────────────────────────────────
 
-        public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
+        public override async Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
             _logger.Info(
-                "[PlaylistManagementPageView] RunCommand RAW | itemId={0} | commandId={1} | data={2}",
+                "[PlaylistManagementPageView] RunCommand RAW | itemId={0} | commandId={1}",
                 itemId ?? "(null)",
-                commandId ?? "(null)",
-                data ?? "(null)");
+                commandId ?? "(null)");
 
             try
             {
@@ -58,7 +63,7 @@ namespace ListProtection.UI.PlaylistManagement
                 {
                     _logger.Warn("[PlaylistManagementPageView] RunCommand — data was null or empty, ignoring");
                     ContentData = BuildOptions();
-                    return Task.FromResult<IPluginUIView>(this);
+                    return this;
                 }
 
                 var ui = _jsonSerializer.DeserializeFromString<PlaylistManagementUI>(data);
@@ -67,9 +72,32 @@ namespace ListProtection.UI.PlaylistManagement
                 {
                     _logger.Warn("[PlaylistManagementPageView] RunCommand — could not parse PlaylistManagementUI from data");
                     ContentData = BuildOptions();
-                    return Task.FromResult<IPluginUIView>(this);
+                    return this;
                 }
 
+                // ── Action: Repair All ─────────────────────────────────────
+                // RepairAll=true on any row takes priority. Build synthetic
+                // MissingMemberRow[] from the store data and call repair service.
+                var repairAllRows = ui.PlaylistRows.Where(r => r.RepairAll && !string.IsNullOrEmpty(r.Id)).ToArray();
+
+                if (repairAllRows.Length > 0)
+                {
+                    _logger.Info(
+                        "[PlaylistManagementPageView] RepairAll triggered for {0} playlist(s)",
+                        repairAllRows.Length);
+
+                    var syntheticRows = BuildRepairAllRows(repairAllRows.Select(r => r.Id).ToArray());
+
+                    if (syntheticRows.Length > 0)
+                        await _repairService.ExecuteRepairs(syntheticRows);
+                    else
+                        _logger.Info("[PlaylistManagementPageView] RepairAll — no candidates available to repair");
+
+                    ContentData = BuildOptions();
+                    return this;
+                }
+
+                // ── Action: Toggle Protection ──────────────────────────────
                 var protectedIds = new HashSet<string>();
                 foreach (var row in ui.PlaylistRows)
                 {
@@ -90,7 +118,86 @@ namespace ListProtection.UI.PlaylistManagement
             }
 
             ContentData = BuildOptions();
-            return Task.FromResult<IPluginUIView>(this);
+            return this;
+        }
+
+        // ── Repair All helper ──────────────────────────────────────────────
+
+        /// <summary>
+        /// For each requested playlistId, builds a MissingMemberRow for every
+        /// missing member that has at least one candidate, with the highest-scoring
+        /// candidate marked Repair=true.
+        /// </summary>
+        private MissingMemberRow[] BuildRepairAllRows(string[] playlistIds)
+        {
+            var missingRecords = ListProtectionPlugin.Instance.MissingMembersStore.Load();
+            var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();
+            var groundTruth = _groundTruthStore.Load();
+
+            var rows = new List<MissingMemberRow>();
+
+            foreach (var playlistId in playlistIds)
+            {
+                var playlistMissing = missingRecords
+                    .Where(r => r.PlaylistId == playlistId && r.Member != null)
+                    .ToList();
+
+                if (playlistMissing.Count == 0)
+                {
+                    _logger.Info("[PlaylistManagementPageView] RepairAll — no missing members for playlist {0}", playlistId);
+                    continue;
+                }
+
+                groundTruth.TryGetValue(playlistId, out var gtEntry);
+                var playlistName = gtEntry?.PlaylistName ?? "(unnamed)";
+
+                foreach (var missing in playlistMissing)
+                {
+                    var candidates = candidateRecords
+                        .Where(c => c.PlaylistId == playlistId && c.MissingMember?.InternalId == missing.Member.InternalId)
+                        .OrderByDescending(c => c.Score)
+                        .ToList();
+
+                    if (candidates.Count == 0)
+                    {
+                        _logger.Info(
+                            "[PlaylistManagementPageView] RepairAll — no candidates for member '{0}' in playlist '{1}', skipping",
+                            missing.Member.Name ?? "(null)", playlistName);
+                        continue;
+                    }
+
+                    var best = candidates[0];
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] RepairAll — selecting candidate '{0}' (score={1}) for member '{2}' in playlist '{3}'",
+                        best.CandidateName ?? "(null)", best.Score, missing.Member.Name ?? "(null)", playlistName);
+
+                    var candidateRows = candidates.Select(c => new CandidateRow
+                    {
+                        Key = playlistId + "_" + missing.Member.InternalId + "_" + c.CandidateInternalId,
+                        CandidateName = c.CandidateName ?? "(unnamed)",
+                        CandidatePath = c.CandidatePath ?? string.Empty,
+                        Score = c.Score,
+                        Signals = string.Join(", ", c.MatchedSignals ?? new List<string>()),
+                        Repair = c.CandidateInternalId == best.CandidateInternalId
+                    }).ToArray();
+
+                    rows.Add(new MissingMemberRow
+                    {
+                        Key = playlistId + "_" + missing.Member.InternalId,
+                        PlaylistName = playlistName,
+                        MemberName = missing.Member.Name ?? "(unnamed)",
+                        Path = missing.Member.Path ?? string.Empty,
+                        DetectedAt = missing.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
+                        Forget = false,
+                        IsSynthetic = false,
+                        Candidates = candidateRows
+                    });
+                }
+            }
+
+            _logger.Info("[PlaylistManagementPageView] RepairAll — built {0} repair row(s)", rows.Count);
+            return rows.ToArray();
         }
 
         // ── Build ──────────────────────────────────────────────────────────
@@ -114,25 +221,20 @@ namespace ListProtection.UI.PlaylistManagement
         {
             var groundTruth = _groundTruthStore.Load();
 
-            var query = new InternalItemsQuery
+            var items = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Playlist" },
                 Recursive = true
-            };
-
-            var items = _libraryManager.GetItemList(query);
+            });
 
             _logger.Info(
                 "[PlaylistManagementPageView] BuildRows — found {0} playlist(s) in Emby library",
                 items?.Length ?? 0);
 
-            // Log every protected ID and whether Emby can resolve it — ghost detection
             var liveIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (items != null)
-            {
                 foreach (var item in items)
                     liveIds.Add(item.Id.ToString("N"));
-            }
 
             foreach (var protectedId in protectedIds)
             {
@@ -165,15 +267,14 @@ namespace ListProtection.UI.PlaylistManagement
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
-                _logger.Info(
-                    "[PlaylistManagementPageView] Playlist row | GuidN={0} | Name={1} | InternalId={2} | Path={3} | IsProtected={4} | GroundTruthExists={5} | MemberCount={6}",
-                    idString,
-                    item.Name ?? "(unnamed)",
-                    item.InternalId,
-                    item.Path ?? "(no path)",
-                    isProtected,
-                    gtEntry != null,
-                    gtEntry?.Members?.Count ?? 0);
+                var memberRows = gtEntry?.Members != null
+                    ? gtEntry.Members.Select(m => new MemberRow
+                    {
+                        Name = m.Name ?? "(unnamed)",
+                        Path = m.Path ?? string.Empty,
+                        InternalId = m.InternalId
+                    }).ToArray()
+                    : new MemberRow[0];
 
                 rows.Add(new PlaylistRow
                 {
@@ -185,7 +286,9 @@ namespace ListProtection.UI.PlaylistManagement
                     MemberCount = gtEntry?.Members?.Count ?? 0,
                     CapturedAt = gtEntry != null
                         ? gtEntry.CapturedAt.ToString("yyyy-MM-dd HH:mm") + " UTC"
-                        : string.Empty
+                        : string.Empty,
+                    RepairAll = false,
+                    Members = memberRows
                 });
             }
 
@@ -200,7 +303,6 @@ namespace ListProtection.UI.PlaylistManagement
             {
                 var entries = _groundTruthStore.Load();
 
-                // Soft-delete entries no longer in protected set
                 foreach (var key in new List<string>(entries.Keys))
                 {
                     if (!protectedIds.Contains(key) && entries[key].IsActive)
@@ -210,7 +312,6 @@ namespace ListProtection.UI.PlaylistManagement
                     }
                 }
 
-                // Capture or restore entries for protected playlists
                 foreach (var playlistId in protectedIds)
                 {
                     if (entries.TryGetValue(playlistId, out var existing))
@@ -226,7 +327,6 @@ namespace ListProtection.UI.PlaylistManagement
                         continue;
                     }
 
-                    // No entry exists — capture fresh snapshot
                     var capture = CaptureMembers(playlistId);
                     if (capture == null) continue;
 
@@ -272,11 +372,7 @@ namespace ListProtection.UI.PlaylistManagement
                 BaseItem playlist = null;
                 foreach (var p in playlistItems)
                 {
-                    if (p.Id == guid)
-                    {
-                        playlist = p;
-                        break;
-                    }
+                    if (p.Id == guid) { playlist = p; break; }
                 }
 
                 if (playlist == null)
@@ -287,9 +383,7 @@ namespace ListProtection.UI.PlaylistManagement
 
                 _logger.Info(
                     "[GroundTruthStore] CaptureMembers — found playlist '{0}' | InternalId={1} | Path={2}",
-                    playlist.Name ?? "(unnamed)",
-                    playlist.InternalId,
-                    playlist.Path ?? "(no path)");
+                    playlist.Name ?? "(unnamed)", playlist.InternalId, playlist.Path ?? "(no path)");
 
                 var members = _libraryManager.GetItemList(new InternalItemsQuery
                 {
@@ -299,8 +393,7 @@ namespace ListProtection.UI.PlaylistManagement
 
                 _logger.Info(
                     "[GroundTruthStore] CaptureMembers — captured {0} member(s) for '{1}'",
-                    members.Length,
-                    playlist.Name ?? "(unnamed)");
+                    members.Length, playlist.Name ?? "(unnamed)");
 
                 var result = new List<GroundTruthMember>(members.Length);
                 foreach (var m in members)
@@ -327,8 +420,6 @@ namespace ListProtection.UI.PlaylistManagement
                 return null;
             }
         }
-
-        // ── Private types ──────────────────────────────────────────────────
 
         private class CaptureResult
         {

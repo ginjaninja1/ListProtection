@@ -23,6 +23,7 @@
 		<Optimize>True</Optimize>
 	</PropertyGroup>
 	<ItemGroup>
+	  <Compile Remove="Services\PosterCopyService.cs" />
 	  <Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
 	  <Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
 	</ItemGroup>

@@ -7,11 +7,19 @@ namespace ListProtection.UI.PlaylistManagement
     /// Bound to DxDataGrid via [GridDataSource] on PlaylistManagementUI.
     /// Id must be Guid "N" format string to match Emby's item.Id.ToString("N").
     ///
-    /// Extended fields (read-only, for diagnostics):
-    ///   Path        — m3u backing file path as reported by Emby
-    ///   InternalId  — Emby database InternalId (long)
-    ///   MemberCount — number of members in GroundTruthStore snapshot
-    ///   CapturedAt  — when the ground truth snapshot was taken
+    /// Probe result (Task 9):
+    ///   commandId is always the single grid-level value ("PlaylistAction").
+    ///   Action disambiguation is done by inspecting which field changed in the
+    ///   round-trip data — same pattern as Tab 2 (Forget vs Repair).
+    ///   itemId is always null.
+    ///
+    /// Actions:
+    ///   IsProtected — toggle protection; always processed
+    ///   RepairAll   — when true on a row, apply best candidate per missing member
+    ///                 for that playlist; takes priority over IsProtected toggle
+    ///
+    /// Members — child grid data source (isSecondaryGridDataSource = true).
+    ///   Populated from GroundTruthStore snapshot. Read-only.
     /// </summary>
     public class PlaylistRow
     {
@@ -30,10 +38,16 @@ namespace ListProtection.UI.PlaylistManagement
         [DisplayName("Protected")]
         public bool IsProtected { get; set; }
 
-        [DisplayName("Members")]
+        [DisplayName("Member Count")]
         public int MemberCount { get; set; }
 
         [DisplayName("Captured")]
         public string CapturedAt { get; set; }
+
+        [DisplayName("Repair All")]
+        public bool RepairAll { get; set; }
+
+        [DisplayName("Members")]
+        public MemberRow[] Members { get; set; } = new MemberRow[0];
     }
 }

@@ -1,4 +1,5 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Services;
+using ListProtection.Storage;
 using ListProtection.UI.Config;
 using ListProtection.UI.MissingMembers;
 using ListProtection.UI.PlaylistManagement;
@@ -28,6 +29,7 @@ namespace ListProtection.UI
         private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
+        private readonly PlaylistRepairService _repairService;
         private readonly List<IPluginUIPageController> _tabPages = new List<IPluginUIPageController>();
 
         public MainController(
@@ -54,6 +56,15 @@ namespace ListProtection.UI
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
             _logger = logManager.GetLogger(nameof(MainController));
 
+            _repairService = new PlaylistRepairService(
+                _missingMembersStore,
+                _groundTruthStore,
+                _playlistStore,
+                _libraryManager,
+                _playlistManager,
+                _userManager,
+                _logger);
+
             PageInfo = new PluginPageInfo
             {
                 Name = "ListProtection",
@@ -74,7 +85,8 @@ namespace ListProtection.UI
                     _groundTruthStore,
                     _libraryManager,
                     _jsonSerializer,
-                    _logger)));
+                    _logger,
+                    _repairService)));
 
             // Tab 2 — Missing Members (with candidate child grid and repair)
             _tabPages.Add(new TabPageController(
@@ -89,8 +101,7 @@ namespace ListProtection.UI
                     _jsonSerializer,
                     _logger,
                     _libraryManager,
-                    _playlistManager,
-                    _userManager)));
+                    _repairService)));
 
             // Tab 3 — Configuration
             _tabPages.Add(new TabPageController(
@@ -110,7 +121,8 @@ namespace ListProtection.UI
                 _groundTruthStore,
                 _libraryManager,
                 _jsonSerializer,
-                _logger);
+                _logger,
+                _repairService);
             return Task.FromResult(view);
         }
 

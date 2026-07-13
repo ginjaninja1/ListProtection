@@ -5,6 +5,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
+using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Serialization;
 using System;
 using System.Collections.Generic;
@@ -111,6 +112,8 @@ namespace ListProtection.UI.PlaylistManagement
 
         private PlaylistRow[] BuildRows(HashSet<string> protectedIds)
         {
+            var groundTruth = _groundTruthStore.Load();
+
             var query = new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Playlist" },
@@ -120,8 +123,36 @@ namespace ListProtection.UI.PlaylistManagement
             var items = _libraryManager.GetItemList(query);
 
             _logger.Info(
-                "[PlaylistManagementPageView] BuildRows — found {0} playlist(s)",
+                "[PlaylistManagementPageView] BuildRows — found {0} playlist(s) in Emby library",
                 items?.Length ?? 0);
+
+            // Log every protected ID and whether Emby can resolve it — ghost detection
+            var liveIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (items != null)
+            {
+                foreach (var item in items)
+                    liveIds.Add(item.Id.ToString("N"));
+            }
+
+            foreach (var protectedId in protectedIds)
+            {
+                var isLive = liveIds.Contains(protectedId);
+                var gtEntry = groundTruth.TryGetValue(protectedId, out var gt) ? gt : null;
+                _logger.Info(
+                    "[PlaylistManagementPageView] Protected playlist | GuidN={0} | Name={1} | LiveInEmby={2} | GroundTruthExists={3} | GroundTruthActive={4} | MemberCount={5}",
+                    protectedId,
+                    gtEntry?.PlaylistName ?? "(no ground truth)",
+                    isLive,
+                    gtEntry != null,
+                    gtEntry?.IsActive ?? false,
+                    gtEntry?.Members?.Count ?? 0);
+
+                if (!isLive)
+                    _logger.Warn(
+                        "[PlaylistManagementPageView] GHOST DETECTED — protected GuidN={0} ({1}) has no matching playlist in Emby library",
+                        protectedId,
+                        gtEntry?.PlaylistName ?? "(unknown)");
+            }
 
             if (items == null || items.Length == 0)
                 return Array.Empty<PlaylistRow>();
@@ -131,11 +162,30 @@ namespace ListProtection.UI.PlaylistManagement
             foreach (var item in items)
             {
                 var idString = item.Id.ToString("N");
+                var isProtected = protectedIds.Contains(idString);
+                var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
+
+                _logger.Info(
+                    "[PlaylistManagementPageView] Playlist row | GuidN={0} | Name={1} | InternalId={2} | Path={3} | IsProtected={4} | GroundTruthExists={5} | MemberCount={6}",
+                    idString,
+                    item.Name ?? "(unnamed)",
+                    item.InternalId,
+                    item.Path ?? "(no path)",
+                    isProtected,
+                    gtEntry != null,
+                    gtEntry?.Members?.Count ?? 0);
+
                 rows.Add(new PlaylistRow
                 {
                     Id = idString,
                     Name = item.Name ?? "(unnamed)",
-                    IsProtected = protectedIds.Contains(idString)
+                    Path = item.Path ?? string.Empty,
+                    InternalId = item.InternalId,
+                    IsProtected = isProtected,
+                    MemberCount = gtEntry?.Members?.Count ?? 0,
+                    CapturedAt = gtEntry != null
+                        ? gtEntry.CapturedAt.ToString("yyyy-MM-dd HH:mm") + " UTC"
+                        : string.Empty
                 });
             }
 
@@ -167,16 +217,12 @@ namespace ListProtection.UI.PlaylistManagement
                     {
                         if (!existing.IsActive)
                         {
-                            // Soft-deleted entry exists — restore silently for now.
-                            // FUTURE: prompt user to restore vs fresh snapshot.
-                            // See FUTURE IDEAS in handover doc.
                             existing.IsActive = true;
                             _logger.Info(
                                 "[GroundTruthStore] Restored soft-deleted entry for playlist {0} (captured {1})",
                                 playlistId,
                                 existing.CapturedAt);
                         }
-                        // Already active — no action needed
                         continue;
                     }
 
@@ -239,11 +285,22 @@ namespace ListProtection.UI.PlaylistManagement
                     return null;
                 }
 
+                _logger.Info(
+                    "[GroundTruthStore] CaptureMembers — found playlist '{0}' | InternalId={1} | Path={2}",
+                    playlist.Name ?? "(unnamed)",
+                    playlist.InternalId,
+                    playlist.Path ?? "(no path)");
+
                 var members = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     ListIds = new[] { playlist.InternalId },
                     Recursive = true
                 });
+
+                _logger.Info(
+                    "[GroundTruthStore] CaptureMembers — captured {0} member(s) for '{1}'",
+                    members.Length,
+                    playlist.Name ?? "(unnamed)");
 
                 var result = new List<GroundTruthMember>(members.Length);
                 foreach (var m in members)

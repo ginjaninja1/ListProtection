@@ -122,7 +122,7 @@ namespace ListProtection.UI.MissingMembers
             var protectedIds = _playlistStore.Load();
 
             // Collect repaired candidates grouped by PlaylistId
-            // Each entry: playlistId -> list of (missingInternalId, candidateInternalId)
+            // playlistId -> list of (missingInternalId, candidateInternalId)
             var repairsByPlaylist = new Dictionary<string, List<(long missingInternalId, long candidateInternalId)>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var masterRow in rows)
@@ -150,7 +150,6 @@ namespace ListProtection.UI.MissingMembers
                         continue;
                     }
 
-                    // Confirm entry still exists in CandidateStore
                     var exists = candidateRecords.Any(c =>
                         c.PlaylistId == playlistId &&
                         c.MissingMember?.InternalId == missingInternalId &&
@@ -179,26 +178,27 @@ namespace ListProtection.UI.MissingMembers
 
             var missingChanged = false;
             var candidatesChanged = false;
+            var groundTruthChanged = false;
 
             foreach (var kvp in repairsByPlaylist)
             {
                 var oldPlaylistId = kvp.Key;
-                var repairs = kvp.Value; // list of (missingInternalId, candidateInternalId)
+                var repairs = kvp.Value;
                 var candidateItemIds = repairs.Select(r => r.candidateInternalId).ToArray();
+                var repairedMissingIds = new HashSet<long>(repairs.Select(r => r.missingInternalId));
 
-                // Look up playlist name from GroundTruthStore
                 var playlistName = "(unknown)";
-                if (groundTruth.TryGetValue(oldPlaylistId, out var oldGtEntry))
+                groundTruth.TryGetValue(oldPlaylistId, out var oldGtEntry);
+                if (oldGtEntry != null)
                     playlistName = oldGtEntry.PlaylistName ?? "(unknown)";
 
                 _logger.Info(
                     "[MissingMembersPageView] ProcessRepairs — playlist='{0}' | repairing {1} member(s) | oldId={2}",
                     playlistName, repairs.Count, oldPlaylistId);
 
-                // ── Check if playlist already exists in Emby ───────────────────────────────────
-                // If a previous repair already recreated it, use AddToPlaylist instead
-                string activePlaylistId = null;
-                long activeInternalId = 0;
+                // ── Check if playlist exists in Emby ───────────────────────────────────────────
+                string activePlaylistId;
+                long activeInternalId;
 
                 if (!Guid.TryParseExact(oldPlaylistId, "N", out var oldGuid))
                 {
@@ -206,20 +206,29 @@ namespace ListProtection.UI.MissingMembers
                     continue;
                 }
 
-                var existingPlaylist = _libraryManager.GetItemList(new InternalItemsQuery
+                var allPlaylists = _libraryManager.GetItemList(new InternalItemsQuery
                 {
-                    IncludeItemTypes = new[] { "Playlist" }
-                }).FirstOrDefault(p => p.Id == oldGuid);
+                    IncludeItemTypes = new[] { "Playlist" },
+                    Recursive = true
+                });
+
+                _logger.Info(
+                    "[MissingMembersPageView] ProcessRepairs — found {0} playlist(s) in Emby library",
+                    allPlaylists?.Length ?? 0);
+
+                var existingPlaylist = allPlaylists?.FirstOrDefault(p => p.Id == oldGuid);
 
                 if (existingPlaylist != null)
                 {
-                    // Playlist still exists — use AddToPlaylist
+                    // ── Playlist exists — AddToPlaylist ────────────────────────────────────────
                     activePlaylistId = oldPlaylistId;
                     activeInternalId = existingPlaylist.InternalId;
 
                     _logger.Info(
-                        "[MissingMembersPageView] ProcessRepairs — playlist exists (InternalId={0}), using AddToPlaylist",
-                        activeInternalId);
+                        "[MissingMembersPageView] ProcessRepairs — playlist exists | Name='{0}' | InternalId={1} | Path={2} | using AddToPlaylist",
+                        existingPlaylist.Name ?? "(unnamed)",
+                        activeInternalId,
+                        existingPlaylist.Path ?? "(no path)");
 
                     try
                     {
@@ -240,13 +249,69 @@ namespace ListProtection.UI.MissingMembers
                             "[MissingMembersPageView] ProcessRepairs — AddToPlaylist failed for '{0}'", ex, playlistName);
                         continue;
                     }
+
+                    // ── Update ground truth after AddToPlaylist ────────────────────────────────
+                    // Re-read live members from Emby so the snapshot reflects reality
+                    var liveMembers = _libraryManager.GetItemList(new InternalItemsQuery
+                    {
+                        ListIds = new[] { activeInternalId },
+                        Recursive = true
+                    });
+
+                    _logger.Info(
+                        "[MissingMembersPageView] ProcessRepairs — re-captured {0} live member(s) for ground truth update",
+                        liveMembers.Length);
+
+                    var updatedMembers = new List<GroundTruthMember>(liveMembers.Length);
+                    foreach (var m in liveMembers)
+                    {
+                        updatedMembers.Add(new GroundTruthMember
+                        {
+                            InternalId = m.InternalId,
+                            Id = m.Id.ToString("N"),
+                            Name = m.Name ?? string.Empty,
+                            Path = m.Path ?? string.Empty,
+                            ListItemEntryId = m.ListItemEntryId
+                        });
+                        _logger.Info(
+                            "[MissingMembersPageView] ProcessRepairs — ground truth member '{0}' | InternalId={1} | ListItemEntryId={2}",
+                            m.Name ?? "(null)", m.InternalId, m.ListItemEntryId);
+                    }
+
+                    // Carry forward any unrepaired missing members from old ground truth
+                    // so they remain tracked even though they aren't live in the playlist yet
+                    if (oldGtEntry?.Members != null)
+                    {
+                        foreach (var oldMember in oldGtEntry.Members)
+                        {
+                            if (repairedMissingIds.Contains(oldMember.InternalId)) continue;
+                            if (updatedMembers.Any(m => m.InternalId == oldMember.InternalId)) continue;
+                            updatedMembers.Add(oldMember);
+                            _logger.Info(
+                                "[MissingMembersPageView] ProcessRepairs — carried forward unrepaired member '{0}' in ground truth",
+                                oldMember.Name ?? "(null)");
+                        }
+                    }
+
+                    groundTruth[activePlaylistId] = new GroundTruthEntry
+                    {
+                        PlaylistName = playlistName,
+                        CapturedAt = DateTime.UtcNow,
+                        IsActive = true,
+                        Members = updatedMembers
+                    };
+                    groundTruthChanged = true;
+
+                    _logger.Info(
+                        "[MissingMembersPageView] ProcessRepairs — ground truth updated for existing playlist | GuidN={0} | members={1}",
+                        activePlaylistId, updatedMembers.Count);
                 }
                 else
                 {
-                    // Playlist is gone — recreate with CreatePlaylist
+                    // ── Playlist is gone — CreatePlaylist ──────────────────────────────────────
                     _logger.Info(
-                        "[MissingMembersPageView] ProcessRepairs — playlist not found in Emby, calling CreatePlaylist with {0} item(s)",
-                        candidateItemIds.Length);
+                        "[MissingMembersPageView] ProcessRepairs — playlist GuidN={0} not found in Emby | calling CreatePlaylist with {1} item(s)",
+                        oldPlaylistId, candidateItemIds.Length);
 
                     PlaylistCreationResult result;
                     try
@@ -283,7 +348,7 @@ namespace ListProtection.UI.MissingMembers
                         continue;
                     }
 
-                    // Resolve new Guid
+                    // Resolve new Guid (PROVEN — probe)
                     var resolvedItems = _libraryManager.GetItemList(new InternalItemsQuery
                     {
                         ItemIds = new[] { newInternalId },
@@ -301,9 +366,10 @@ namespace ListProtection.UI.MissingMembers
                     activeInternalId = newInternalId;
 
                     _logger.Info(
-                        "[MissingMembersPageView] ProcessRepairs — resolved new GuidN={0}", newGuidN);
+                        "[MissingMembersPageView] ProcessRepairs — new playlist | GuidN={0} | InternalId={1} | Path={2}",
+                        newGuidN, newInternalId, resolvedItems[0].Path ?? "(no path)");
 
-                    // ── Update PlaylistManagementStore ─────────────────────────────────────────
+                    // Update PlaylistManagementStore
                     protectedIds.Remove(oldPlaylistId);
                     protectedIds.Add(newGuidN);
                     _playlistStore.Save(protectedIds);
@@ -311,10 +377,7 @@ namespace ListProtection.UI.MissingMembers
                         "[MissingMembersPageView] ProcessRepairs — PlaylistManagementStore updated | removed={0} | added={1}",
                         oldPlaylistId, newGuidN);
 
-                    // ── Migrate remaining missing records to new PlaylistId ─────────────────────
-                    // Any missing member not being repaired now must still surface in Tab 2
-                    // under the new GuidN, not the old one which no longer exists in the store.
-                    var repairedMissingIds = new HashSet<long>(repairs.Select(r => r.missingInternalId));
+                    // Migrate remaining missing records to new PlaylistId
                     var migrated = 0;
                     foreach (var record in missingRecords)
                     {
@@ -328,11 +391,11 @@ namespace ListProtection.UI.MissingMembers
                     {
                         missingChanged = true;
                         _logger.Info(
-                            "[MissingMembersPageView] ProcessRepairs — migrated {0} remaining missing record(s) to new GuidN={1}",
+                            "[MissingMembersPageView] ProcessRepairs — migrated {0} remaining missing record(s) to GuidN={1}",
                             migrated, newGuidN);
                     }
 
-                    // ── Migrate remaining CandidateEntries to new PlaylistId ───────────────────
+                    // Migrate remaining CandidateEntries to new PlaylistId
                     var migratedCandidates = 0;
                     foreach (var c in candidateRecords)
                     {
@@ -346,12 +409,11 @@ namespace ListProtection.UI.MissingMembers
                     {
                         candidatesChanged = true;
                         _logger.Info(
-                            "[MissingMembersPageView] ProcessRepairs — migrated {0} candidate(s) to new GuidN={1}",
+                            "[MissingMembersPageView] ProcessRepairs — migrated {0} candidate(s) to GuidN={1}",
                             migratedCandidates, newGuidN);
                     }
 
-                    // ── Build new GroundTruthEntry via direct capture ──────────────────────────
-                    // Write it ourselves — event chain cannot be relied on for recreation case.
+                    // Capture ground truth directly (event chain cannot be relied on — PROVEN)
                     var capturedMembers = _libraryManager.GetItemList(new InternalItemsQuery
                     {
                         ListIds = new[] { activeInternalId },
@@ -378,13 +440,12 @@ namespace ListProtection.UI.MissingMembers
                             m.Name ?? "(null)", m.InternalId, m.ListItemEntryId);
                     }
 
-                    // Carry forward unrepaired members from old ground truth so they remain tracked
+                    // Carry forward unrepaired members from old ground truth
                     if (oldGtEntry?.Members != null)
                     {
                         foreach (var oldMember in oldGtEntry.Members)
                         {
                             if (repairedMissingIds.Contains(oldMember.InternalId)) continue;
-                            // Don't duplicate if already captured from live playlist
                             if (newMembers.Any(m => m.InternalId == oldMember.InternalId)) continue;
                             newMembers.Add(oldMember);
                             _logger.Info(
@@ -404,20 +465,18 @@ namespace ListProtection.UI.MissingMembers
                     if (groundTruth.ContainsKey(oldPlaylistId))
                         groundTruth.Remove(oldPlaylistId);
 
-                    _groundTruthStore.Save(groundTruth);
+                    groundTruthChanged = true;
                     _logger.Info(
-                        "[MissingMembersPageView] ProcessRepairs — GroundTruthStore saved | GuidN={0} | members={1}",
+                        "[MissingMembersPageView] ProcessRepairs — GroundTruthStore entry written | GuidN={0} | members={1}",
                         newGuidN, newMembers.Count);
                 }
 
                 // ── Remove repaired MissingMemberEntries only ──────────────────────────────────
-                var repairedIds = new HashSet<long>(repairs.Select(r => r.missingInternalId));
                 for (var i = missingRecords.Count - 1; i >= 0; i--)
                 {
                     var r = missingRecords[i];
-                    // Match on current PlaylistId (may have been migrated above to activePlaylistId)
                     var matchesPlaylist = r.PlaylistId == oldPlaylistId || r.PlaylistId == activePlaylistId;
-                    if (matchesPlaylist && repairedIds.Contains(r.Member?.InternalId ?? -1))
+                    if (matchesPlaylist && repairedMissingIds.Contains(r.Member?.InternalId ?? -1))
                     {
                         _logger.Info(
                             "[MissingMembersPageView] ProcessRepairs — removing missing record '{0}'",
@@ -432,7 +491,7 @@ namespace ListProtection.UI.MissingMembers
                 {
                     var c = candidateRecords[i];
                     var matchesPlaylist = c.PlaylistId == oldPlaylistId || c.PlaylistId == activePlaylistId;
-                    if (matchesPlaylist && repairedIds.Contains(c.MissingMember?.InternalId ?? -1))
+                    if (matchesPlaylist && repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1))
                     {
                         candidateRecords.RemoveAt(i);
                         candidatesChanged = true;
@@ -445,6 +504,12 @@ namespace ListProtection.UI.MissingMembers
             }
 
             // ── Persist ────────────────────────────────────────────────────────────────────────
+
+            if (groundTruthChanged)
+            {
+                _groundTruthStore.Save(groundTruth);
+                _logger.Info("[MissingMembersPageView] GroundTruthStore saved after repair");
+            }
 
             if (missingChanged)
             {
@@ -571,7 +636,12 @@ namespace ListProtection.UI.MissingMembers
             foreach (var playlistId in protectedIds)
             {
                 if (!groundTruth.TryGetValue(playlistId, out var entry) || !entry.IsActive)
+                {
+                    _logger.Warn(
+                        "[MissingMembersPageView] BuildRows — protected playlist {0} has no active ground truth entry, skipping",
+                        playlistId);
                     continue;
+                }
 
                 var playlistMissingRows = new List<MissingMemberRow>();
 

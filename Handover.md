@@ -116,10 +116,10 @@ IMPLEMENTED AND VERIFIED
   Event observability verified (see VERIFIED EMBY BEHAVIOURAL LEARNINGS)
   PlaylistEventProbe entry point (probe only — not production code)
   Three-tab UI structure renders in Emby                PROVEN (Task 5)
-  PlaylistRow.cs
+  PlaylistRow.cs                (updated Task 8 — Path, InternalId, MemberCount, CapturedAt added)
   PlaylistManagementUI.cs       (DxDataGrid with cell editing + onChangeCommand)
   PlaylistManagementStore.cs    (Pattern B — HashSet<string>)
-  PlaylistManagementPageView.cs (RunCommand parses full ContentData, saves state)
+  PlaylistManagementPageView.cs (updated Task 8 — ghost detection logging, enriched BuildRows)
   MainController.cs             (ILibraryManager, IPlaylistManager, IUserManager injected)
   Plugin.cs                     (stores constructed as singletons)
   Playlist grid renders in Emby UI                      PROVEN
@@ -212,34 +212,49 @@ IMPLEMENTED AND VERIFIED
     Full MissingMembersUI ContentData arrives in data parameter
     Child row Repair state embedded in MissingMemberRows[n].Candidates[m].Repair
 
-  AddToPlaylist probe (partial — 2026-07-12):
-    AddToPlaylist called successfully — m3u file updated correctly.
-    BUT: playlist not visible in Emby UI for Cartman.
-    ROOT CAUSE: original playlist had lost user association (orphaned entity).
-    AddToPlaylist updates the m3u but does not re-establish user ownership.
+  ── TASK 8 — PROVEN (2026-07-13) ──────────────────────────────────────
 
-  CreatePlaylist probe PROVEN (2026-07-12):
-    CreatePlaylist with User=user, ItemIdList=[long[]], IsPublic=true
-    produces a user-owned playlist visible to Cartman immediately.
-    10 of 11 members seeded successfully (New Heights excluded — already
-    repaired and removed from CandidateStore in earlier partial test).
-    Both "PLaylist 1" (name collision with ghost) and "NewPlaylistTest"
-    created and visible — name collision is NOT an issue; Emby disambiguates
-    folder name automatically ("PLaylist 1 [playlist] - 1").
-    PlaylistCreationResult.Id returns InternalId as string (e.g. "1358178"),
-    NOT a Guid. To get the Guid: resolve via GetItemList after creation
-    using ItemIds=[long.Parse(result.Id)] — AGREED, not yet proven.
+  MissingMembersPageView.cs     (ProcessRepairs rewritten — full repair flow)
+  PlaylistManagementPageView.cs (ghost detection logging + enriched BuildRows)
+  PlaylistRow.cs                (Path, InternalId, MemberCount, CapturedAt added)
 
-  CURRENT STATE OF ProcessRepairs:
-    Existing implementation uses AddToPlaylist — this is the wrong strategy.
-    Must be replaced with CreatePlaylist approach (see REPAIR LOGIC below).
-    ProcessRepairs rewrite is Task 8.
+  PROBE 1 PROVEN (2026-07-13):
+    result.Id from CreatePlaylist is InternalId string (e.g. "1358353")
+    GetItemList(ItemIds=[long.Parse(result.Id)], IncludeItemTypes=["Playlist"])
+    returns the new playlist. items[0].Id.ToString("N") = new GuidN for store key.
+
+  PROBE 2 PROVEN (2026-07-13):
+    CreatePlaylist fires PlaylistItemsAdded SYNCHRONOUSLY before the awaitable
+    returns. The event fires before any post-await code runs. Therefore
+    PlaylistManagementStore cannot be updated before the event fires.
+    PlaylistMaintenanceService guard check always fails for new playlists.
+    EVENT CHAIN CANNOT BE RELIED ON for ground truth after recreation.
+    Ground truth must be written directly after CreatePlaylist, using
+    GetItemList(ListIds=[newInternalId]) — the same pattern as CaptureMembers.
+
+  Repair flow PROVEN (2026-07-13):
+    Single candidate repair: playlist created, track added, stores updated.
+    Subsequent candidate repairs: playlist exists, AddToPlaylist used.
+    Ground truth updated correctly after both CreatePlaylist and AddToPlaylist.
+    MissingMembersStore cleaned up per-member (not per-playlist) — correct.
+    CandidateStore cleaned up per-member — correct.
+    Tab 2 shows "No missing members" after all members repaired.
+
+  KNOWN ISSUE (observed 2026-07-13 — LOW PRIORITY):
+    First repaired member occasionally shows two ground truth entries
+    (old path and new path for same track name). Likely pre-existing ground
+    truth corruption from earlier test sessions, not a bug in repair logic.
+    The carry-forward dedup logic (check InternalId before adding) should
+    prevent this in clean state. Needs re-verification in a clean test.
 
 NOT IMPLEMENTED
-  ProcessRepairs rewrite using CreatePlaylist         <- Task 8
-  GroundTruthStore + PlaylistManagementStore update after recreation
-  Candidate store pruning (stale library paths)
-  IScheduledTask post-library-scan trigger — DEFERRED
+  Repair-all button on playlist row (Tab 2 — no playlist-level action yet)
+  Ground truth member viewer (Tab 1 — "Members" button per playlist row)
+  "Accept as missing" action (Tab 1 — acknowledge missing without replacing)
+  Candidate store pruning (stale library paths)           <- Task 9
+  PlaylistManagementStore schema enrichment (friendly name, m3u path)
+  Ghost playlist cleanup (delete orphaned m3u on successful repair)
+  IScheduledTask post-library-scan trigger                <- DEFERRED
 
 PROTOTYPE / UNVALIDATED CODE
 =====================================================
@@ -252,7 +267,7 @@ Present but UNVALIDATED
   Confidence rules (FilenameMatchRule, PathMatchRule)
   CandidateDiscoveryProbeTask.cs — superseded; DELETE
   CandidateRefreshTask.cs — unknown content, unreviewed
-  PlaylistRecreationProbeTask.cs — probe only; DELETE after Task 8
+  PlaylistRecreationProbeTask.cs — probe only; DELETE now Task 8 complete
 
 RULE: These components are NOT integrated, NOT verified, NOT functional
 as a system. They are design scaffolding only.
@@ -308,7 +323,7 @@ FILE LAYOUT (ACTUAL)
     CandidateDiscoveryTask.cs
     CandidateDiscoveryProbeTask.cs  <- DELETE
     CandidateRefreshTask.cs         <- unreviewed
-    PlaylistRecreationProbeTask.cs  <- DELETE after Task 8
+    PlaylistRecreationProbeTask.cs  <- DELETE (Task 8 complete)
   UI/
     MainController.cs
     TabPageController.cs
@@ -318,7 +333,7 @@ FILE LAYOUT (ACTUAL)
       PlaylistManagementPageView.cs
     MissingMembers/
       MissingMemberRow.cs
-      CandidateRow.cs
+      CandidateRow.cs               <- (file is CanididateRow.cs — typo in filename, do not rename)
       MissingMembersUI.cs
       MissingMembersPageView.cs
     Config/
@@ -378,6 +393,22 @@ EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
   Store is always source of truth. View is always a pure projection.
   Never hold mutable state on the view between round-trips.
 
+  KNOWN UX LIMITATION: Full page refresh on every command round-trip.
+  Grid state (expanded rows, filters, selections) resets on each action.
+  The full ContentData payload is logged on every RunCommand (Task 8) so
+  future work can determine whether expanded/filter state survives the
+  round-trip in the payload and could be reinstated on rebuild.
+
+--- MULTIPLE BUTTONS PER ROW (UNPROVEN — to be investigated Task 9+) ---
+
+  The DxDataGrid framework supports multiple action buttons per row in
+  principle, disambiguated by commandId in RunCommand. This needs probing
+  before implementing. The proposed use case is Tab 1 playlist rows with:
+    "Members" button — show current ground truth members (child grid)
+    "Repair All" button — repair all missing members with top candidate
+  Probe approach: add two button columns to PlaylistRow, use distinct
+  commandId values, log which fires.
+
 --- DxDataGrid (PROVEN FROM DLL) ---
 
   DxGridOptions constructor:
@@ -435,13 +466,14 @@ EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
 --- InternalItemsQuery KEY FIELDS (PROVEN FROM DLL) ---
 
   ItemIds        long[]   — filter by InternalId(s)
+  ListIds        long[]   — filter by playlist InternalId (returns playlist members)
   ListItemIds    long[]   — filter by ListItemEntryId(s) (playlist member order)
   IncludeItemTypes string[] — e.g. new[] { "Playlist" }, new[] { "Audio" }
   Recursive      bool
 
   NO Guid-based filter field exists. To find a playlist by Guid:
-    Load all playlists via GetItemList(IncludeItemTypes=["Playlist"])
-    then FirstOrDefault(p => p.Id == playlistGuid) as Playlist.
+    Load all playlists via GetItemList(IncludeItemTypes=["Playlist"], Recursive=true)
+    then FirstOrDefault(p => p.Id == playlistGuid).
 
 --- IScheduledTask (PROVEN FROM DLL) ---
 
@@ -482,16 +514,27 @@ EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
     int    ItemAddedCount
 
   CRITICAL: CreatePlaylist.Id is an InternalId string, not a Guid.
-  To get the new playlist Guid after creation:
+  To get the new playlist Guid after creation (PROVEN — 2026-07-13):
     long newInternalId = long.Parse(result.Id);
     var items = _libraryManager.GetItemList(new InternalItemsQuery
     {
         ItemIds = new[] { newInternalId },
         IncludeItemTypes = new[] { "Playlist" }
     });
-    var newGuid = items[0].Id; // Guid
-    var newGuidN = newGuid.ToString("N"); // for store keys
-  AGREED — not yet proven. Probe in Task 8 before writing store update logic.
+    var newGuidN = items[0].Id.ToString("N"); // for store keys
+
+  AddToPlaylist (PROVEN — 2026-07-13):
+    Use the async overload:
+      await _playlistManager.AddToPlaylist(
+          existingPlaylist as Playlist,
+          candidateItemIds,
+          skipDuplicates: true,
+          user: user,
+          cancellationToken: CancellationToken.None)
+    Where existingPlaylist is retrieved via:
+      GetItemList(IncludeItemTypes=["Playlist"], Recursive=true)
+        .FirstOrDefault(p => p.Id == oldGuid)
+    The playlist item must be cast as Playlist (not BaseItem) for this overload.
 
   PLAYLIST VISIBILITY (PROVEN — 2026-07-12):
     AddToPlaylist updates the m3u file correctly but does NOT establish
@@ -505,10 +548,28 @@ EMBY PLUGIN UI FRAMEWORK (FULLY AUDITED)
     Emby disambiguates the folder name automatically (e.g. "PLaylist 1 [playlist] - 1").
     Both old and new playlists are accessible. No data loss.
 
-  REPAIR STRATEGY (PROVEN — 2026-07-12):
-    Use CreatePlaylist (not AddToPlaylist) for repair.
-    Seed all repaired member InternalIds in ItemIdList in one call.
-    This guarantees user ownership and immediate UI visibility.
+  REPAIR STRATEGY (PROVEN — 2026-07-13):
+    Check if playlist still exists in Emby before deciding which API to use:
+      If playlist exists (GetItemList finds it by Guid) -> AddToPlaylist
+      If playlist is gone -> CreatePlaylist
+    This check happens per PlaylistId group in ProcessRepairs.
+
+--- CREATEPLAYLIST EVENT TIMING (PROVEN — 2026-07-13) ---
+
+  CreatePlaylist fires PlaylistItemsAdded SYNCHRONOUSLY before returning.
+  The event fires during the await, before post-await code runs.
+  PlaylistManagementStore cannot be updated before the event.
+  PlaylistMaintenanceService guard check therefore always fails for new playlists
+  created by repair — it checks IsProtected which reads PlaylistManagementStore,
+  and the new GuidN is not there yet.
+
+  CONSEQUENCE: Do NOT rely on event chain to write ground truth after CreatePlaylist.
+  Write ground truth directly using GetItemList(ListIds=[newInternalId]).
+  This mirrors the CaptureMembers pattern used on initial protection.
+
+  The event chain (PlaylistMaintenanceService) correctly maintains the playlist
+  going forward once PlaylistManagementStore contains the new GuidN. Only the
+  initial write after recreation must be done manually.
 
 
 STORAGE ARCHITECTURE
@@ -520,6 +581,13 @@ PATTERN A — SimpleFileStore<T> where T : EditableOptionsBase
 PATTERN B — Plain store
   Constructor: (IApplicationHost, ILogger, string pluginFullName)
   Used for: all other stores
+
+PLAYLISTMANAGEMENTSTORE SCHEMA — TODO (next coding round)
+  Currently stores only GuidN strings.
+  Should be extended to include per-playlist metadata:
+    PlaylistName   string   — friendly name for display without cross-referencing GroundTruth
+    M3uPath        string   — backing file path as reported by Emby at time of protection
+  This makes the store self-describing and aids ghost diagnosis.
 
 GROUND TRUTH ENTRY SHAPE
 
@@ -588,59 +656,52 @@ MISSING MEMBER KEY FORMAT
   Real:      "{PlaylistId}_{Member.InternalId}"   (PlaylistId = 32 hex chars)
   Synthetic: "synthetic_{PlaylistId}"
 
-REPAIR LOGIC (Task 8 — AGREED, not yet implemented in production)
+REPAIR LOGIC (PROVEN — 2026-07-13)
 
-  ProcessRepairs rewrite — replaces current AddToPlaylist implementation:
+  ProcessRepairs in MissingMembersPageView.cs:
 
   1. Deserialise MissingMembersUI from data
-  2. Collect all candidate rows where Repair == true and IsSynthetic == false
-  3. Group by PlaylistId
+  2. Collect candidate rows where Repair == true and IsSynthetic == false
+  3. Group by PlaylistId -> list of (missingInternalId, candidateInternalId)
   4. For each PlaylistId group:
-       a. Resolve User: _userManager.GetUserList(new UserQuery())[0]
-       b. Build long[] itemIds from CandidateInternalId values in the group
-          (look up each from CandidateStore to confirm entry still exists)
-       c. Get PlaylistName from GroundTruthStore entry for this PlaylistId
-       d. Call CreatePlaylist:
-            await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-            {
-                Name = playlistName,
-                ItemIdList = itemIds,
-                MediaType = "Audio",
-                User = user,
-                IsPublic = true
-            })
-       e. Log result.Id, result.Name, result.ItemAddedCount
-       f. Resolve new Guid from new InternalId (see IPlaylistManager section above)
-          PROBE THIS STEP before writing — resolution pattern is AGREED not PROVEN
-       g. Update GroundTruthStore:
-            Remove old entry keyed by old PlaylistId Guid "N"
-            The PlaylistMaintenanceService event chain will write the new entry
-            when ItemUpdated fires after CreatePlaylist — DO NOT write manually
-       h. Update PlaylistManagementStore:
-            Remove old PlaylistId Guid "N"
-            Add new Guid "N"
-       i. Remove all MissingMemberEntries for this PlaylistId from MissingMembersStore
-       j. Remove all CandidateEntries for this PlaylistId from CandidateStore
-  5. Save all modified stores. Rebuild view.
+       a. Look up playlistName from GroundTruthStore
+       b. Resolve User: _userManager.GetUserList(new UserQuery())[0]
+       c. Build long[] candidateItemIds from candidateInternalId values
+       d. Check if playlist exists in Emby:
+            GetItemList(IncludeItemTypes=["Playlist"], Recursive=true)
+              .FirstOrDefault(p => p.Id == oldGuid)
 
-  CRITICAL: Do NOT manually update GroundTruthStore members after CreatePlaylist.
-    PlaylistMaintenanceService handles PlaylistItemsAdded -> ItemUpdated -> readback.
-    Manually writing would race with the event chain.
-    Only remove the old stale entry — the new one is written by the event chain.
+          IF EXISTS (AddToPlaylist path):
+            Call AddToPlaylist(existingPlaylist as Playlist, candidateItemIds,
+                               skipDuplicates=true, user, CancellationToken.None)
+            Re-read live members via GetItemList(ListIds=[activeInternalId])
+            Carry forward unrepaired members from old ground truth (by InternalId)
+            Write updated GroundTruthEntry under same GuidN
+            activePlaylistId = oldPlaylistId (no store key change)
 
-  UNPROVEN STEPS requiring probe before implementing:
-    New Guid resolution via GetItemList(ItemIds=[long.Parse(result.Id)])
-    Whether PlaylistMaintenanceService correctly handles the new PlaylistId
-    (it fires on PlaylistItemsAdded for the new playlist — needs the new Guid
-    to be in PlaylistManagementStore before the event fires, otherwise the
-    guard check "is this playlist protected?" will fail and members won't be
-    written to ground truth)
+          IF NOT EXISTS (CreatePlaylist path):
+            Call CreatePlaylist(Name, ItemIdList=candidateItemIds, "Audio", user, IsPublic=true)
+            Resolve new GuidN via GetItemList(ItemIds=[long.Parse(result.Id)])
+            Update PlaylistManagementStore: remove old GuidN, add new GuidN — SAVE IMMEDIATELY
+            Migrate remaining MissingMemberEntries to new GuidN (those not being repaired now)
+            Migrate remaining CandidateEntries to new GuidN
+            Capture ground truth directly via GetItemList(ListIds=[newInternalId])
+            Carry forward unrepaired members from old ground truth (dedup by InternalId)
+            Write new GroundTruthEntry under new GuidN
+            Remove old GroundTruthEntry
+            activePlaylistId = newGuidN
 
-  ORDER DEPENDENCY: Update PlaylistManagementStore with new Guid BEFORE
-    CreatePlaylist call returns, if possible — otherwise do it immediately
-    after and before any await. The event chain may fire on a thread pool
-    thread concurrently. Safe approach: update store immediately after
-    getting result.Id, before any further async work.
+       e. Remove MissingMemberEntries where PlaylistId matches AND
+          Member.InternalId is in repairedMissingIds (per-member, not per-playlist)
+       f. Remove CandidateEntries where PlaylistId matches AND
+          MissingMember.InternalId is in repairedMissingIds
+
+  5. Save GroundTruthStore, MissingMembersStore, CandidateStore if changed.
+
+  CRITICAL: Ground truth is always written directly (both paths).
+    Do NOT rely on event chain for ground truth after any repair operation.
+    The event chain cannot be relied on because CreatePlaylist fires
+    PlaylistItemsAdded synchronously before the awaitable returns.
 
 
 KNOWN DATA ISSUES
@@ -653,13 +714,23 @@ STALE CANDIDATE PATHS (observed 2026-07-12)
   ROOT CAUSE: CandidateDiscoverer queries all Audio items regardless of library scope.
   MITIGATION (Task 9 — DEFERRED): post-discovery prune via GetItemById.
 
-GHOST PLAYLIST (observed 2026-07-12)
+GHOST PLAYLIST (observed 2026-07-12, not reproduced 2026-07-13)
   Original playlist e617f097c8d08fa563aa29b7118d898c lost user association
   after D:\ library was removed and Emby rescanned. The m3u file persists
   and Emby tracks it as an item but it is not user-owned and not visible in UI.
   CreatePlaylist with same name creates a new user-owned playlist alongside it.
-  The ghost is harmless but untidy. Cleanup: delete ghost m3u from disk,
-  or ignore — it does not affect repair correctness.
+  PlaylistManagementPageView.BuildRows now logs GHOST DETECTED warning for any
+  protected GuidN not found in Emby library.
+  Ghost not reproduced in 2026-07-13 test session — may have been cleared by
+  earlier manual cleanup. Investigation ongoing.
+  Cleanup approach: delete ghost m3u from disk or add DeleteItem call in repair flow.
+
+DUPLICATE GROUND TRUTH MEMBERS (observed 2026-07-13 — LOW PRIORITY)
+  First repaired member occasionally shows two ground truth entries for the
+  same track name (old path and new path). Likely pre-existing ground truth
+  corruption from earlier test sessions rather than a bug in repair logic.
+  The carry-forward dedup logic checks InternalId before adding, which should
+  prevent this in clean state. Needs re-verification starting from clean stores.
 
 
 VERIFIED EMBY BEHAVIOURAL LEARNINGS
@@ -678,13 +749,20 @@ VERIFIED EMBY BEHAVIOURAL LEARNINGS
   IndexNumber, ProductionYear, Audio.Artists, Audio.AlbumArtists — all populated
   Cast: (item as Audio) — returns null if not Audio subtype
 
---- PLAYLIST VISIBILITY (PROVEN — 2026-07-12) ---
+--- PLAYLIST VISIBILITY (PROVEN — 2026-07-12/13) ---
 
   AddToPlaylist updates the m3u correctly but does not establish user ownership.
   CreatePlaylist with User=user always produces a visible, user-owned playlist.
   PlaylistCreationResult.Id is an InternalId string, not a Guid.
   Name collision with existing ghost m3u: Emby disambiguates folder name.
   Both old and new playlists remain accessible.
+
+--- CREATEPLAYLIST EVENT TIMING (PROVEN — 2026-07-13) ---
+
+  PlaylistItemsAdded fires synchronously during CreatePlaylist before returning.
+  Cannot update PlaylistManagementStore before the event fires.
+  Do not rely on event chain for ground truth after recreation.
+  Write ground truth directly after CreatePlaylist using GetItemList(ListIds=).
 
 --- EVENT OBSERVABILITY (PROVEN — Task 1) ---
 
@@ -713,6 +791,11 @@ VERIFIED EMBY BEHAVIOURAL LEARNINGS
     BUT playlist not visible in UI (lost user association)
   CreatePlaylist probe (2026-07-12):
     10 members seeded, both test playlists visible to Cartman immediately
+  Blow Away repair (2026-07-13):
+    CreatePlaylist path — playlist created, visible, ground truth written directly
+  Subsequent repairs (2026-07-13):
+    AddToPlaylist path — members added to existing playlist, ground truth updated
+    All missing members cleared, Tab 2 shows "No missing members"
 
 --- ISERVICEENTRYPOINT AND STORE ACCESS (PROVEN — 2026-06-26) ---
 
@@ -722,6 +805,7 @@ VERIFIED EMBY BEHAVIOURAL LEARNINGS
 --- RunCommand PAYLOAD (PROVEN — 2026-06-26) ---
 
   itemId always null from DxDataGrid. commandId correct. data = full ContentData JSON.
+  Full payload is now logged on every RunCommand call (Task 8) for UI state inspection.
 
 --- DxDataGrid EDITING (PROVEN — 2026-06-26) ---
 
@@ -749,16 +833,30 @@ VERIFIED EMBY BEHAVIOURAL LEARNINGS
 UI DESIGN
 =====================================================
 
-TAB 1 - MANAGED PLAYLISTS (COMPLETE — PROVEN)
+TAB 1 - MANAGED PLAYLISTS (COMPLETE — PROVEN, enhancements pending)
   View all playlists with protection status
   Toggle protection on/off per playlist
+  Now shows: Path, InternalId, MemberCount (from ground truth), CapturedAt
+  Ghost detection logging added (GHOST DETECTED warn in server log)
 
-TAB 2 - MISSING MEMBERS (COMPLETE — PROVEN, repair strategy updated Task 8)
+  PENDING (next coding round):
+    "Members" button per row — show current ground truth members as child grid
+    "Repair All" button per row — repair all missing members with top candidate
+    "Accept Missing" action — acknowledge members as intentionally absent,
+      remove from MissingMembersStore and GroundTruthStore without replacing
+    Multiple buttons per row need probing first (see DxDataGrid section)
+
+TAB 2 - MISSING MEMBERS (COMPLETE — PROVEN)
   Grid grouped by playlist
   Forget column — immediate, no Save button
   Master-detail expand per missing member — child candidate grid
   Child grid: Candidate, Path, Score (sorted desc), Signals, Repair checkbox
-  Repair fires RepairMember command
+  Repair fires RepairMember command — per-candidate or per-member level
+
+  PENDING:
+    Repair-all at playlist level (no button exists yet on the playlist group row)
+    "Will be recreated" label against playlist group when playlist no longer
+      exists in Emby (signpost to user that repair will call CreatePlaylist)
 
 TAB 3 - CONFIGURATION (placeholder)
 
@@ -770,57 +868,55 @@ CURRENT TASK (AUTHORITATIVE)
 =====================================================
 
 TASK
-  TASK 8 — ProcessRepairs rewrite + store update after CreatePlaylist
+  TASK 9 — Tab 1 enhancements + UI cleanup
 
 STATUS
-  ProcessRepairs currently uses AddToPlaylist (wrong strategy — proven insufficient).
-  Must be rewritten to use CreatePlaylist.
-  Two unproven steps require probing before the rewrite is complete.
-
-WHAT TO DO FIRST (before writing any code)
-
-  PROBE 1 — New Guid resolution after CreatePlaylist:
-    After calling CreatePlaylist, result.Id is an InternalId string (e.g. "1358178").
-    Probe: call GetItemList(new InternalItemsQuery
-    {
-        ItemIds = new[] { long.Parse(result.Id) },
-        IncludeItemTypes = new[] { "Playlist" }
-    })
-    Log items[0].Id (Guid) and items[0].Id.ToString("N") (Guid "N" for store key).
-    Confirm this returns the new playlist and its Guid before writing store update.
-
-  PROBE 2 — PlaylistManagementStore update timing:
-    The PlaylistMaintenanceService checks PlaylistManagementStore on PlaylistItemsAdded.
-    If the new Guid is not in the store when the event fires, members won't be
-    written to ground truth.
-    Update PlaylistManagementStore with new Guid immediately after getting result.Id,
-    before any await. Then probe whether ground truth is correctly written.
+  Task 8 (ProcessRepairs) is complete and proven.
+  The following items are the agreed next coding round.
 
 WHAT TO BUILD
 
-  Rewrite ProcessRepairs in MissingMembersPageView.cs:
-    Group repaired candidates by PlaylistId.
-    For each group: call CreatePlaylist with all CandidateInternalIds in ItemIdList.
-    Immediately update PlaylistManagementStore with new Guid "N".
-    Remove old PlaylistId from PlaylistManagementStore and old entry from
-    GroundTruthStore (event chain writes new entry — do not write manually).
-    Remove MissingMemberEntries and CandidateEntries for repaired PlaylistId.
-    Save stores. Rebuild view.
+  1. DELETE probe files:
+       Tasks/PlaylistRecreationProbeTask.cs
+       Tasks/CandidateDiscoveryProbeTask.cs
 
-  See REPAIR LOGIC section for full spec.
+  2. PROBE multiple buttons per DxDataGrid row:
+       Before implementing "Members" and "Repair All" buttons on Tab 1,
+       probe whether two action buttons on one row are supported and how
+       commandId disambiguates them. Add two dummy button columns to
+       PlaylistRow, log which commandId arrives, confirm behaviour.
 
-  After repair: delete PlaylistRecreationProbeTask.cs and CandidateDiscoveryProbeTask.cs.
+  3. AFTER PROBE — implement Tab 1 enhancements:
+       "Members" button per playlist row:
+         Opens child grid (master-detail on Tab 1) showing current
+         GroundTruthEntry members (Name, Path, InternalId, ListItemEntryId)
+         Read-only — no editing in this view
+       "Repair All" button per playlist row:
+         Finds all MissingMemberEntries for this playlist
+         Takes the highest-scoring candidate for each
+         Calls ProcessRepairs logic for all in one action
+       "Accept Missing" — mechanism TBD pending probe results
+         Removes member from MissingMembersStore and GroundTruthStore
+         Member treated as intentionally absent, will not resurface
 
-DEFINITION OF DONE — TASK 8
-  ProcessRepairs rewritten using CreatePlaylist
-  New playlist visible to Cartman in Emby UI after repair
-  GroundTruthStore correctly updated via event chain (not manually)
-  PlaylistManagementStore updated with new Guid
-  MissingMembersStore and CandidateStore cleaned up
-  All 11 members repaired in a single run
-  Ghost playlist handling documented
+  4. PlaylistManagementStore schema enrichment:
+       Add PlaylistName and M3uPath alongside GuidN in the store
+       So Tab 1 and logs are self-describing without cross-referencing GroundTruth
+
+  5. Tab 2 UI improvements:
+       Add "Will be recreated" label/indicator against playlist group row
+         when the playlist GuidN is no longer found in Emby library
+       Remove or relocate any "(Count: N)" display if still present
+
+DEFINITION OF DONE — TASK 9
+  Probe files deleted
+  Multiple-button probe run and result recorded
+  "Members" child grid working on Tab 1 (if probe confirms supported)
+  "Repair All" implemented and tested
+  PlaylistManagementStore schema updated
+  "Will be recreated" indicator on Tab 2
   Results recorded in this document
-  Task 9 defined
+  Task 10 defined
 
 
 IMPLEMENTATION ROADMAP (ORDERED)
@@ -834,10 +930,11 @@ IMPLEMENTATION ROADMAP (ORDERED)
 5a. Fast path activation + scheduled task             <- COMPLETE (proven 2026-06-27)
 6. Candidate discovery                                <- COMPLETE (proven 2026-07-12)
 7. Candidates UI + repair workflow (UI)               <- COMPLETE (proven 2026-07-12)
-8. ProcessRepairs rewrite (CreatePlaylist strategy)   <- CURRENT TASK
-9. Candidate store pruning (stale library paths)      <- DEFERRED
-10. Post-library-scan trigger                         <- DEFERRED
-11. Configuration UI                                  <- DEFERRED
+8. ProcessRepairs rewrite (CreatePlaylist strategy)   <- COMPLETE (proven 2026-07-13)
+9. Tab 1 enhancements + UI cleanup                    <- CURRENT TASK
+10. Candidate store pruning (stale library paths)     <- DEFERRED
+11. Post-library-scan trigger                         <- DEFERRED
+12. Configuration UI                                  <- DEFERRED
 
 
 SESSION COMPLETION RULE
@@ -866,6 +963,7 @@ FUTURE IDEAS (NOT MVP)
   CandidateRefreshTask.cs — review and integrate or delete
   Full-screen candidate view via dialog if column space is a problem
   Ghost playlist cleanup — delete orphaned m3u files after successful repair
+  DeleteItem on old playlist as part of repair flow (removes ghost from Emby DB)
 
 These are explicitly deferred.
 

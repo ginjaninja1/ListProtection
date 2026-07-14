@@ -14,35 +14,40 @@ namespace ListProtection.UI.PlaylistManagement
     ///   itemId is always null.
     ///
     /// Actions:
-    ///   IsProtected — toggle protection; always processed
-    ///   RepairAll   — when true on a row, apply best candidate per missing member
-    ///                 for that playlist; takes priority over IsProtected toggle
+    ///   IsProtected  — toggle protection; requires confirm dialog when unticking
+    ///   RepairAll    — when true on a row, apply best candidate per missing member
+    ///   OpenRepair   — launch RepairDialogView for this playlist (protected only)
+    ///   OpenGroundTruth — launch GroundTruthDialogView (protected only)
+    ///   OpenHistory  — launch EventHistoryDialogView (protected only)
     ///
-    /// Members — child grid data source (isSecondaryGridDataSource = true).
-    ///   Populated from GroundTruthStore snapshot. Read-only.
+    /// Detail — child grid data source (isSecondaryGridDataSource = true).
+    ///   Single row showing playlist metadata for troubleshooting. Read-only.
     /// </summary>
     public class PlaylistRow
     {
+        // ── Hidden identity fields ─────────────────────────────────────────
+
         [DisplayName("Id")]
         public string Id { get; set; }
-
-        [DisplayName("Playlist")]
-        public string Name { get; set; }
-
-        [DisplayName("Path")]
-        public string Path { get; set; }
 
         [DisplayName("InternalId")]
         public long InternalId { get; set; }
 
-        [DisplayName("Protected")]
-        public bool IsProtected { get; set; }
+        // ── Visible read-only columns ──────────────────────────────────────
 
-        [DisplayName("Member Count")]
+        [DisplayName("Playlist")]
+        public string Name { get; set; }
+
+        [DisplayName("GT")]
         public int MemberCount { get; set; }
 
-        [DisplayName("Captured")]
-        public string CapturedAt { get; set; }
+        [DisplayName("MM")]
+        public int MissingCount { get; set; }
+
+        // ── Editable action columns ────────────────────────────────────────
+
+        [DisplayName("Protected")]
+        public bool IsProtected { get; set; }
 
         [DisplayName("Repair All")]
         public bool RepairAll { get; set; }
@@ -53,7 +58,12 @@ namespace ListProtection.UI.PlaylistManagement
         [DisplayName("Members…")]
         public bool OpenGroundTruth { get; set; }
 
-        [DisplayName("Members")]
-        public MemberRow[] Members { get; set; } = new MemberRow[0];
+        [DisplayName("History…")]
+        public bool OpenHistory { get; set; }
+
+        // ── Child grid data source ─────────────────────────────────────────
+
+        [DisplayName("Detail")]
+        public PlaylistDetailRow[] Detail { get; set; } = new PlaylistDetailRow[0];
     }
 }

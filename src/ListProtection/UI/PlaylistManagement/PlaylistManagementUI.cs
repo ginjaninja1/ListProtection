@@ -9,22 +9,21 @@ namespace ListProtection.UI.PlaylistManagement
     /// <summary>
     /// UI definition for Tab 1 — Managed Playlists.
     ///
-    /// Probe result (Task 9):
-    ///   Single onChangeCommand fires for ALL cell edits with commandId="PlaylistAction".
-    ///   itemId is always null. Action type is determined by inspecting changed fields
-    ///   in the round-trip PlaylistRows data (RepairAll=true takes priority).
-    ///
     /// Master grid: one row per playlist in the Emby library.
-    ///   Editable columns: IsProtected, RepairAll.
-    ///   keyExpr: "Id" (GuidN string).
+    ///   Read-only columns: Name, GT (member count), MM (missing count).
+    ///   Hidden columns: Id, InternalId.
+    ///   Editable columns: IsProtected, RepairAll, OpenRepair, OpenGroundTruth, OpenHistory.
+    ///   Editable columns are disabled (allowEditing=false) for unprotected rows at the
+    ///   action level — the columns are always visible but clicks are no-ops for
+    ///   unprotected playlists (framework does not support per-row conditional visibility).
     ///
-    /// Detail grid: ground truth members of the expanded playlist row.
-    ///   Read-only. Bound via PlaylistRow.Members (isSecondaryGridDataSource = true).
+    /// Detail grid: single-row PlaylistDetailRow showing PlaylistId, Path, CapturedAt.
+    ///   Read-only. Bound via PlaylistRow.Detail (isSecondaryGridDataSource = true).
     /// </summary>
     public class PlaylistManagementUI : EditableOptionsBase
     {
         public override string EditorTitle => "Managed Playlists";
-        public override string EditorDescription => "Toggle protection on a playlist to track and repair its membership. Use Repair All to apply the best available candidate for every missing member.";
+        public override string EditorDescription => "Toggle protection on a playlist to track and repair its membership.";
 
         [GridDataSource(nameof(PlaylistRows))]
         public DxDataGrid PlaylistGrid { get; set; }
@@ -54,15 +53,18 @@ namespace ListProtection.UI.PlaylistManagement
                     switch (col.dataField)
                     {
                         case "Id":
-                        case "Path":
                         case "InternalId":
-                        case "MemberCount":
-                        case "CapturedAt":
-                        case "Name":
+                            col.visible = false;
                             col.allowEditing = false;
                             break;
 
-                        case "Members":
+                        case "Name":
+                        case "MemberCount":
+                        case "MissingCount":
+                            col.allowEditing = false;
+                            break;
+
+                        case "Detail":
                             col.visible = false;
                             col.allowEditing = false;
                             col.isSecondaryGridDataSource = true;
@@ -72,16 +74,17 @@ namespace ListProtection.UI.PlaylistManagement
                         case "RepairAll":
                         case "OpenRepair":
                         case "OpenGroundTruth":
+                        case "OpenHistory":
                             // Intentionally editable — leave as default
                             break;
                     }
                 }
             }
 
-            // ── Detail (child) grid options — Members ──────────────────────
+            // ── Detail grid options — PlaylistDetailRow ────────────────────
             var detailOptions = new DxGridOptions(
-                new MemberRow(),
-                "InternalId",
+                new PlaylistDetailRow(),
+                "PlaylistId",
                 false,
                 false,
                 false,
@@ -101,7 +104,7 @@ namespace ListProtection.UI.PlaylistManagement
             {
                 enabled = true,
                 autoExpandAll = false,
-                childRowsFieldName = "Members",
+                childRowsFieldName = "Detail",
                 detailGridOptions = detailOptions
             };
 

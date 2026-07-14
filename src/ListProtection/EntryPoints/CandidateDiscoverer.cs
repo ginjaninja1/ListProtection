@@ -112,6 +112,43 @@ namespace ListProtection.EntryPoints
                     existing.Sort((a, b) => b.Score.CompareTo(a.Score));
                     plugin.CandidateStore.Save(existing);
                     logger.Info("[CandidateDiscoverer] Discovery complete — store updated");
+
+                    // Write CandidateFound events — one per affected playlist
+                    try
+                    {
+                        var byPlaylist = new Dictionary<string, List<CandidateEntry>>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var c in existing)
+                        {
+                            if (!byPlaylist.TryGetValue(c.PlaylistId, out var list))
+                                byPlaylist[c.PlaylistId] = list = new List<CandidateEntry>();
+                            list.Add(c);
+                        }
+
+                        foreach (var kvp in byPlaylist)
+                        {
+                            var payloadLines = new List<string>();
+                            foreach (var c in kvp.Value)
+                            {
+                                payloadLines.Add(
+                                    (c.CandidateName ?? "(unnamed)") +
+                                    " | score=" + c.Score +
+                                    " | " + (c.CandidatePath ?? string.Empty));
+                            }
+
+                            plugin.EventStore.Append(new EventEntry
+                            {
+                                EventType = "CandidateFound",
+                                PlaylistId = kvp.Key,
+                                PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
+                                OccurredAt = DateTime.UtcNow,
+                                Payload = string.Join("\n", payloadLines)
+                            });
+                        }
+                    }
+                    catch (Exception evEx)
+                    {
+                        logger.ErrorException("[CandidateDiscoverer] Failed to write CandidateFound event", evEx);
+                    }
                 }
                 else
                 {

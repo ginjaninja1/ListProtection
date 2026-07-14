@@ -4,6 +4,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ListProtection.EntryPoints
 {
@@ -165,6 +166,41 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.MissingMembersStore.Save(missing);
                     logger.Info("[MissingMemberDetector] Detection complete — store updated");
+
+                    // Write MissingDetected events — one per affected playlist
+                    try
+                    {
+                        // Group new missing records by playlist for payload building
+                        // We re-load to get only the records that were just added
+                        // (all records in 'missing' that are new this run)
+                        var byPlaylist = new Dictionary<string, List<MissingMemberEntry>>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var record in missing)
+                        {
+                            if (!byPlaylist.TryGetValue(record.PlaylistId, out var list))
+                                byPlaylist[record.PlaylistId] = list = new List<MissingMemberEntry>();
+                            list.Add(record);
+                        }
+
+                        foreach (var kvp in byPlaylist)
+                        {
+                            var payloadLines = new List<string>();
+                            foreach (var r in kvp.Value)
+                                payloadLines.Add((r.Member?.Name ?? "(unnamed)") + " | " + (r.Member?.Path ?? string.Empty));
+
+                            plugin.EventStore.Append(new EventEntry
+                            {
+                                EventType = "MissingDetected",
+                                PlaylistId = kvp.Key,
+                                PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
+                                OccurredAt = DateTime.UtcNow,
+                                Payload = string.Join("\n", payloadLines)
+                            });
+                        }
+                    }
+                    catch (Exception evEx)
+                    {
+                        logger.ErrorException("[MissingMemberDetector] Failed to write MissingDetected event", evEx);
+                    }
                 }
                 else
                 {

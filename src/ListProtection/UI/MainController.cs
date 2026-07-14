@@ -88,20 +88,21 @@ namespace ListProtection.UI
                     _logger,
                     _repairService)));
 
-            // Tab 2 — Missing Members (with candidate child grid and repair)
-            _tabPages.Add(new TabPageController(
-                pluginInfo,
-                "MissingMembers",
-                "Missing Members",
-                info => new MissingMembersPageView(
-                    info,
-                    _missingMembersStore,
-                    _groundTruthStore,
-                    _playlistStore,
-                    _jsonSerializer,
-                    _logger,
-                    _libraryManager,
-                    _repairService)));
+            // Tab 2 — Missing Members (hidden — functionality now covered by Repair dialog)
+            // Uncomment to restore the standalone missing members tab.
+            //_tabPages.Add(new TabPageController(
+            //    pluginInfo,
+            //    "MissingMembers",
+            //    "Missing Members",
+            //    info => new MissingMembersPageView(
+            //        info,
+            //        _missingMembersStore,
+            //        _groundTruthStore,
+            //        _playlistStore,
+            //        _jsonSerializer,
+            //        _logger,
+            //        _libraryManager,
+            //        _repairService)));
 
             // Tab 3 — Configuration
             _tabPages.Add(new TabPageController(

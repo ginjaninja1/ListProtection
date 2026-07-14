@@ -383,6 +383,39 @@ namespace ListProtection.Services
                 }
 
                 _logger.Info("[PlaylistRepairService] Repair complete | playlist='{0}' | activeId={1}", playlistName, activePlaylistId);
+
+                // Write Repair event
+                try
+                {
+                    var payloadLines = new List<string>();
+                    foreach (var (missingId, candidateId) in repairs)
+                    {
+                        var candidate = candidateRecords.Find(c =>
+                            c.CandidateInternalId == candidateId &&
+                            c.MissingMember?.InternalId == missingId);
+                        var missingRecord = missingRecords.Find(r =>
+                            r.Member?.InternalId == missingId);
+
+                        var missingName = missingRecord?.Member?.Name ?? "(unknown)";
+                        var candidateName = candidate?.CandidateName ?? "(unknown)";
+                        var candidatePath = candidate?.CandidatePath ?? string.Empty;
+
+                        payloadLines.Add(missingName + " → " + candidateName + " | " + candidatePath);
+                    }
+
+                    ListProtectionPlugin.Instance.EventStore.Append(new EventEntry
+                    {
+                        EventType = "Repair",
+                        PlaylistId = activePlaylistId,
+                        PlaylistName = playlistName,
+                        OccurredAt = DateTime.UtcNow,
+                        Payload = string.Join("\n", payloadLines)
+                    });
+                }
+                catch (Exception evEx)
+                {
+                    _logger.ErrorException("[PlaylistRepairService] Failed to write Repair event", evEx);
+                }
             }
 
             // Persist

@@ -31,6 +31,7 @@ namespace ListProtection
         public GroundTruthStore GroundTruthStore { get; }
         public MissingMembersStore MissingMembersStore { get; }
         public CandidateStore CandidateStore { get; }
+        public EventStore EventStore { get; }
 
         private readonly ConfigStore _configStore;
 
@@ -52,6 +53,7 @@ namespace ListProtection
             GroundTruthStore = new GroundTruthStore(applicationHost, _logger, this.Name + ".GroundTruth");
             MissingMembersStore = new MissingMembersStore(applicationHost, _logger, this.Name + ".MissingMembers");
             CandidateStore = new CandidateStore(applicationHost, _logger, this.Name + ".Candidates");
+            EventStore = new EventStore(applicationHost, _logger, this.Name + ".Events");
 
             Instance = this;
         }

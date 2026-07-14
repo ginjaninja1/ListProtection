@@ -1,8 +1,10 @@
 ﻿using ListProtection.Services;
 using ListProtection.Storage;
+using ListProtection.UI.EventHistoryDialog;
 using ListProtection.UI.GroundTruthDialog;
 using ListProtection.UI.MissingMembers;
 using ListProtection.UI.RepairDialog;
+using ListProtection.UI.UnprotectConfirmDialog;
 using ListProtection.UIBaseClasses.Views;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -27,6 +29,11 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
         private readonly PlaylistRepairService _repairService;
+
+        // Carries the playlistId that triggered the unprotect confirm dialog,
+        // so OnDialogResult can complete the action if confirmed.
+        private string _pendingUnprotectId;
+        private string _pendingUnprotectName;
 
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
@@ -79,13 +86,49 @@ namespace ListProtection.UI.PlaylistManagement
                     return this;
                 }
 
+                // ── Action: Open History Dialog ────────────────────────────
+                var openHistoryRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenHistory && !string.IsNullOrEmpty(r.Id));
+
+                if (openHistoryRow != null)
+                {
+                    // Only meaningful for protected playlists
+                    var protectedIds = _store.Load();
+                    if (!protectedIds.Contains(openHistoryRow.Id))
+                    {
+                        _logger.Info("[PlaylistManagementPageView] OpenHistory on unprotected row ignored");
+                        ContentData = BuildOptions();
+                        return this;
+                    }
+
+                    var gtEntry = _groundTruthStore.Load().TryGetValue(openHistoryRow.Id, out var gt) ? gt : null;
+                    var playlistName = gtEntry?.PlaylistName ?? openHistoryRow.Name ?? "(unnamed)";
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] OpenHistory — launching dialog for playlist '{0}' (GuidN={1})",
+                        playlistName, openHistoryRow.Id);
+
+                    return new EventHistoryDialogView(
+                        _pluginInfo,
+                        openHistoryRow.Id,
+                        playlistName,
+                        ListProtectionPlugin.Instance.EventStore,
+                        _logger);
+                }
+
                 // ── Action: Open Ground Truth Dialog ──────────────────────
-                // OpenGroundTruth=true on any row launches the full-screen
-                // read-only member snapshot for that playlist.
                 var openGtRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenGroundTruth && !string.IsNullOrEmpty(r.Id));
 
                 if (openGtRow != null)
                 {
+                    // Only meaningful for protected playlists
+                    var protectedIds = _store.Load();
+                    if (!protectedIds.Contains(openGtRow.Id))
+                    {
+                        _logger.Info("[PlaylistManagementPageView] OpenGroundTruth on unprotected row ignored");
+                        ContentData = BuildOptions();
+                        return this;
+                    }
+
                     var gtEntry = _groundTruthStore.Load().TryGetValue(openGtRow.Id, out var gt) ? gt : null;
                     var playlistName = gtEntry?.PlaylistName ?? openGtRow.Name ?? "(unnamed)";
 
@@ -102,12 +145,18 @@ namespace ListProtection.UI.PlaylistManagement
                 }
 
                 // ── Action: Open Repair Dialog ─────────────────────────────
-                // OpenRepair=true on any row launches the full-screen repair
-                // dialog for that playlist. Takes priority over all other actions.
                 var openRepairRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenRepair && !string.IsNullOrEmpty(r.Id));
 
                 if (openRepairRow != null)
                 {
+                    var protectedIds = _store.Load();
+                    if (!protectedIds.Contains(openRepairRow.Id))
+                    {
+                        _logger.Info("[PlaylistManagementPageView] OpenRepair on unprotected row ignored");
+                        ContentData = BuildOptions();
+                        return this;
+                    }
+
                     var gtEntry = _groundTruthStore.Load().TryGetValue(openRepairRow.Id, out var gt) ? gt : null;
                     var playlistName = gtEntry?.PlaylistName ?? openRepairRow.Name ?? "(unnamed)";
 
@@ -115,7 +164,7 @@ namespace ListProtection.UI.PlaylistManagement
                         "[PlaylistManagementPageView] OpenRepair — launching dialog for playlist '{0}' (GuidN={1})",
                         playlistName, openRepairRow.Id);
 
-                    var dialog = new RepairDialogView(
+                    return new RepairDialogView(
                         _pluginInfo,
                         openRepairRow.Id,
                         playlistName,
@@ -125,13 +174,9 @@ namespace ListProtection.UI.PlaylistManagement
                         _repairService,
                         _jsonSerializer,
                         _logger);
-
-                    return dialog;
                 }
 
                 // ── Action: Repair All ─────────────────────────────────────
-                // RepairAll=true on any row takes priority. Build synthetic
-                // MissingMemberRow[] from the store data and call repair service.
                 var repairAllRows = ui.PlaylistRows.Where(r => r.RepairAll && !string.IsNullOrEmpty(r.Id)).ToArray();
 
                 if (repairAllRows.Length > 0)
@@ -152,19 +197,64 @@ namespace ListProtection.UI.PlaylistManagement
                 }
 
                 // ── Action: Toggle Protection ──────────────────────────────
-                var protectedIds = new HashSet<string>();
+                // Determine which playlists are being protected vs. unprotected
+                // compared to the current store state.
+                var currentProtectedIds = _store.Load();
+                var incomingProtectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var row in ui.PlaylistRows)
                 {
                     if (row.IsProtected && !string.IsNullOrEmpty(row.Id))
-                        protectedIds.Add(row.Id);
+                        incomingProtectedIds.Add(row.Id);
                 }
 
+                // Detect newly unprotected playlists
+                var beingUnprotected = currentProtectedIds
+                    .Where(id => !incomingProtectedIds.Contains(id))
+                    .ToArray();
+
+                // Detect newly protected playlists
+                var beingProtected = incomingProtectedIds
+                    .Where(id => !currentProtectedIds.Contains(id))
+                    .ToArray();
+
+                // If exactly one playlist is being unprotected, launch confirm dialog
+                if (beingUnprotected.Length == 1 && beingProtected.Length == 0)
+                {
+                    var unprotectId = beingUnprotected[0];
+                    var gtEntry = _groundTruthStore.Load().TryGetValue(unprotectId, out var gt) ? gt : null;
+                    var unprotectName = gtEntry?.PlaylistName
+                        ?? ui.PlaylistRows.FirstOrDefault(r => r.Id == unprotectId)?.Name
+                        ?? "(unnamed)";
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] Unprotect requested for '{0}' — launching confirm dialog",
+                        unprotectName);
+
+                    _pendingUnprotectId = unprotectId;
+                    _pendingUnprotectName = unprotectName;
+
+                    return new UnprotectConfirmDialogView(
+                        _pluginInfo,
+                        unprotectId,
+                        unprotectName,
+                        _jsonSerializer,
+                        _logger);
+                }
+
+                // Save new protected set and handle protect events
                 _logger.Info(
                     "[PlaylistManagementPageView] Saving {0} protected playlist(s)",
-                    protectedIds.Count);
+                    incomingProtectedIds.Count);
 
-                _store.Save(protectedIds);
-                ReconcileGroundTruth(protectedIds);
+                // Write Protect events for newly protected playlists
+                foreach (var newId in beingProtected)
+                {
+                    var nameForEvent = ui.PlaylistRows.FirstOrDefault(r => r.Id == newId)?.Name ?? "(unnamed)";
+                    WriteEvent("Protect", newId, nameForEvent, string.Empty);
+                }
+
+                _store.Save(incomingProtectedIds);
+                ReconcileGroundTruth(incomingProtectedIds);
             }
             catch (Exception ex)
             {
@@ -179,7 +269,34 @@ namespace ListProtection.UI.PlaylistManagement
 
         public override void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
         {
-            if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView)
+            if (dialogView is UnprotectConfirmDialogView confirmDialog)
+            {
+                _logger.Info(
+                    "[PlaylistManagementPageView] UnprotectConfirmDialog closed | Confirmed={0}",
+                    confirmDialog.Confirmed);
+
+                if (confirmDialog.Confirmed && !string.IsNullOrEmpty(_pendingUnprotectId))
+                {
+                    var currentIds = _store.Load();
+                    currentIds.Remove(_pendingUnprotectId);
+
+                    WriteEvent("Unprotect", _pendingUnprotectId, _pendingUnprotectName, string.Empty);
+
+                    _store.Save(currentIds);
+                    ReconcileGroundTruth(currentIds);
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] Unprotect completed for '{0}'",
+                        _pendingUnprotectName);
+                }
+
+                _pendingUnprotectId = null;
+                _pendingUnprotectName = null;
+
+                ContentData = BuildOptions();
+                RaiseUIViewInfoChanged();
+            }
+            else if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView || dialogView is EventHistoryDialogView)
             {
                 _logger.Info(
                     "[PlaylistManagementPageView] {0} closed — refreshing Tab 1",
@@ -193,11 +310,6 @@ namespace ListProtection.UI.PlaylistManagement
 
         // ── Repair All helper ──────────────────────────────────────────────
 
-        /// <summary>
-        /// For each requested playlistId, builds a MissingMemberRow for every
-        /// missing member that has at least one candidate, with the highest-scoring
-        /// candidate marked Repair=true.
-        /// </summary>
         private MissingMemberRow[] BuildRepairAllRows(string[] playlistIds)
         {
             var missingRecords = ListProtectionPlugin.Instance.MissingMembersStore.Load();
@@ -290,6 +402,7 @@ namespace ListProtection.UI.PlaylistManagement
         private PlaylistRow[] BuildRows(HashSet<string> protectedIds)
         {
             var groundTruth = _groundTruthStore.Load();
+            var missingRecords = ListProtectionPlugin.Instance.MissingMembersStore.Load();
 
             var items = _libraryManager.GetItemList(new InternalItemsQuery
             {
@@ -337,30 +450,36 @@ namespace ListProtection.UI.PlaylistManagement
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
-                var memberRows = gtEntry?.Members != null
-                    ? gtEntry.Members.Select(m => new MemberRow
+                // Count missing members for this playlist
+                var missingCount = missingRecords.Count(r =>
+                    string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase));
+
+                // Single-row detail for the child grid (troubleshooting metadata)
+                var detailRows = new[]
+                {
+                    new PlaylistDetailRow
                     {
-                        Name = m.Name ?? "(unnamed)",
-                        Path = m.Path ?? string.Empty,
-                        InternalId = m.InternalId
-                    }).ToArray()
-                    : new MemberRow[0];
+                        PlaylistId = idString,
+                        Path = item.Path ?? string.Empty,
+                        CapturedAt = gtEntry != null
+                            ? gtEntry.CapturedAt.ToString("yyyy-MM-dd HH:mm") + " UTC"
+                            : string.Empty
+                    }
+                };
 
                 rows.Add(new PlaylistRow
                 {
                     Id = idString,
-                    Name = item.Name ?? "(unnamed)",
-                    Path = item.Path ?? string.Empty,
                     InternalId = item.InternalId,
-                    IsProtected = isProtected,
+                    Name = item.Name ?? "(unnamed)",
                     MemberCount = gtEntry?.Members?.Count ?? 0,
-                    CapturedAt = gtEntry != null
-                        ? gtEntry.CapturedAt.ToString("yyyy-MM-dd HH:mm") + " UTC"
-                        : string.Empty,
+                    MissingCount = missingCount,
+                    IsProtected = isProtected,
                     RepairAll = false,
                     OpenRepair = false,
                     OpenGroundTruth = false,
-                    Members = memberRows
+                    OpenHistory = false,
+                    Detail = detailRows
                 });
             }
 
@@ -490,6 +609,27 @@ namespace ListProtection.UI.PlaylistManagement
             {
                 _logger.ErrorException("[GroundTruthStore] CaptureMembers failed for playlist " + playlistIdN, ex);
                 return null;
+            }
+        }
+
+        // ── Event helpers ──────────────────────────────────────────────────
+
+        private void WriteEvent(string eventType, string playlistId, string playlistName, string payload)
+        {
+            try
+            {
+                ListProtectionPlugin.Instance.EventStore.Append(new EventEntry
+                {
+                    EventType = eventType,
+                    PlaylistId = playlistId,
+                    PlaylistName = playlistName,
+                    OccurredAt = DateTime.UtcNow,
+                    Payload = payload ?? string.Empty
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[PlaylistManagementPageView] WriteEvent failed", ex);
             }
         }
 

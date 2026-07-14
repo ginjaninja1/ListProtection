@@ -1,6 +1,8 @@
 ﻿using ListProtection.Services;
 using ListProtection.Storage;
+using ListProtection.UI.GroundTruthDialog;
 using ListProtection.UI.MissingMembers;
+using ListProtection.UI.RepairDialog;
 using ListProtection.UIBaseClasses.Views;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
@@ -18,6 +20,7 @@ namespace ListProtection.UI.PlaylistManagement
 {
     internal class PlaylistManagementPageView : PluginPageView
     {
+        private readonly PluginInfo _pluginInfo;
         private readonly PlaylistManagementStore _store;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly ILibraryManager _libraryManager;
@@ -35,6 +38,7 @@ namespace ListProtection.UI.PlaylistManagement
             PlaylistRepairService repairService)
             : base(pluginInfo.Id)
         {
+            _pluginInfo = pluginInfo;
             _store = store;
             _groundTruthStore = groundTruthStore;
             _libraryManager = libraryManager;
@@ -73,6 +77,56 @@ namespace ListProtection.UI.PlaylistManagement
                     _logger.Warn("[PlaylistManagementPageView] RunCommand — could not parse PlaylistManagementUI from data");
                     ContentData = BuildOptions();
                     return this;
+                }
+
+                // ── Action: Open Ground Truth Dialog ──────────────────────
+                // OpenGroundTruth=true on any row launches the full-screen
+                // read-only member snapshot for that playlist.
+                var openGtRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenGroundTruth && !string.IsNullOrEmpty(r.Id));
+
+                if (openGtRow != null)
+                {
+                    var gtEntry = _groundTruthStore.Load().TryGetValue(openGtRow.Id, out var gt) ? gt : null;
+                    var playlistName = gtEntry?.PlaylistName ?? openGtRow.Name ?? "(unnamed)";
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] OpenGroundTruth — launching dialog for playlist '{0}' (GuidN={1})",
+                        playlistName, openGtRow.Id);
+
+                    return new GroundTruthDialogView(
+                        _pluginInfo,
+                        openGtRow.Id,
+                        playlistName,
+                        _groundTruthStore,
+                        _logger);
+                }
+
+                // ── Action: Open Repair Dialog ─────────────────────────────
+                // OpenRepair=true on any row launches the full-screen repair
+                // dialog for that playlist. Takes priority over all other actions.
+                var openRepairRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenRepair && !string.IsNullOrEmpty(r.Id));
+
+                if (openRepairRow != null)
+                {
+                    var gtEntry = _groundTruthStore.Load().TryGetValue(openRepairRow.Id, out var gt) ? gt : null;
+                    var playlistName = gtEntry?.PlaylistName ?? openRepairRow.Name ?? "(unnamed)";
+
+                    _logger.Info(
+                        "[PlaylistManagementPageView] OpenRepair — launching dialog for playlist '{0}' (GuidN={1})",
+                        playlistName, openRepairRow.Id);
+
+                    var dialog = new RepairDialogView(
+                        _pluginInfo,
+                        openRepairRow.Id,
+                        playlistName,
+                        ListProtectionPlugin.Instance.MissingMembersStore,
+                        _groundTruthStore,
+                        _store,
+                        _repairService,
+                        _jsonSerializer,
+                        _logger);
+
+                    return dialog;
                 }
 
                 // ── Action: Repair All ─────────────────────────────────────
@@ -119,6 +173,22 @@ namespace ListProtection.UI.PlaylistManagement
 
             ContentData = BuildOptions();
             return this;
+        }
+
+        // ── Dialog result ──────────────────────────────────────────────────
+
+        public override void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
+        {
+            if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView)
+            {
+                _logger.Info(
+                    "[PlaylistManagementPageView] {0} closed — refreshing Tab 1",
+                    dialogView.GetType().Name);
+                ContentData = BuildOptions();
+                RaiseUIViewInfoChanged();
+            }
+
+            base.OnDialogResult(dialogView, completedOk, data);
         }
 
         // ── Repair All helper ──────────────────────────────────────────────
@@ -288,6 +358,8 @@ namespace ListProtection.UI.PlaylistManagement
                         ? gtEntry.CapturedAt.ToString("yyyy-MM-dd HH:mm") + " UTC"
                         : string.Empty,
                     RepairAll = false,
+                    OpenRepair = false,
+                    OpenGroundTruth = false,
                     Members = memberRows
                 });
             }

@@ -70,6 +70,8 @@ namespace ListProtection.UI.PlaylistManagement
 
                         case "IsProtected":
                         case "RepairAll":
+                        case "OpenRepair":
+                        case "OpenGroundTruth":
                             // Intentionally editable — leave as default
                             break;
                     }

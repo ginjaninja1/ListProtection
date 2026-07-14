@@ -40,8 +40,17 @@ namespace ListProtection.UI.MissingMembers
         [DisplayName("Detected")]
         public string DetectedAt { get; set; }
 
-        [DisplayName("Forget")]
+        /// <summary>Tab 2 dismiss checkbox — kept for Tab 2 compatibility.</summary>
+        [DisplayName("Dismiss")]
         public bool Forget { get; set; }
+
+        /// <summary>Dialog: dismiss this missing member (remove from tracking).</summary>
+        [DisplayName("Dismiss")]
+        public bool DismissMember { get; set; }
+
+        /// <summary>Dialog: repair this member using its strongest candidate.</summary>
+        [DisplayName("Repair")]
+        public bool RepairMember { get; set; }
 
         [DisplayName("IsSynthetic")]
         public bool IsSynthetic { get; set; }

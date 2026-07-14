@@ -47,6 +47,12 @@ namespace ListProtection.UI.PlaylistManagement
         [DisplayName("Repair All")]
         public bool RepairAll { get; set; }
 
+        [DisplayName("Repair…")]
+        public bool OpenRepair { get; set; }
+
+        [DisplayName("Members…")]
+        public bool OpenGroundTruth { get; set; }
+
         [DisplayName("Members")]
         public MemberRow[] Members { get; set; } = new MemberRow[0];
     }

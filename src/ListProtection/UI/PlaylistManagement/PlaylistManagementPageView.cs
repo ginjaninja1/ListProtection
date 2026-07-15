@@ -30,10 +30,7 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ILogger _logger;
         private readonly PlaylistRepairService _repairService;
 
-        // Carries the playlistId that triggered the unprotect confirm dialog,
-        // so OnDialogResult can complete the action if confirmed.
-        private string _pendingUnprotectId;
-        private string _pendingUnprotectName;
+
 
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
@@ -230,13 +227,30 @@ namespace ListProtection.UI.PlaylistManagement
                         "[PlaylistManagementPageView] Unprotect requested for '{0}' — launching confirm dialog",
                         unprotectName);
 
-                    _pendingUnprotectId = unprotectId;
-                    _pendingUnprotectName = unprotectName;
+                    // Capture locals for lambdas
+                    var capturedId = unprotectId;
+                    var capturedName = unprotectName;
 
                     return new UnprotectConfirmDialogView(
                         _pluginInfo,
                         unprotectId,
                         unprotectName,
+                        parentPageView: this,
+                        executeUnprotect: () =>
+                        {
+                            var currentIds = _store.Load();
+                            currentIds.Remove(capturedId);
+                            WriteEvent("Unprotect", capturedId, capturedName, string.Empty);
+                            _store.Save(currentIds);
+                            ReconcileGroundTruth(currentIds);
+                            _logger.Info(
+                                "[PlaylistManagementPageView] Unprotect executed for '{0}'",
+                                capturedName);
+                        },
+                        rebuildParentContent: () =>
+                        {
+                            ContentData = BuildOptions();
+                        },
                         _jsonSerializer,
                         _logger);
                 }
@@ -269,34 +283,7 @@ namespace ListProtection.UI.PlaylistManagement
 
         public override void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
         {
-            if (dialogView is UnprotectConfirmDialogView confirmDialog)
-            {
-                _logger.Info(
-                    "[PlaylistManagementPageView] UnprotectConfirmDialog closed | Confirmed={0}",
-                    confirmDialog.Confirmed);
-
-                if (confirmDialog.Confirmed && !string.IsNullOrEmpty(_pendingUnprotectId))
-                {
-                    var currentIds = _store.Load();
-                    currentIds.Remove(_pendingUnprotectId);
-
-                    WriteEvent("Unprotect", _pendingUnprotectId, _pendingUnprotectName, string.Empty);
-
-                    _store.Save(currentIds);
-                    ReconcileGroundTruth(currentIds);
-
-                    _logger.Info(
-                        "[PlaylistManagementPageView] Unprotect completed for '{0}'",
-                        _pendingUnprotectName);
-                }
-
-                _pendingUnprotectId = null;
-                _pendingUnprotectName = null;
-
-                ContentData = BuildOptions();
-                RaiseUIViewInfoChanged();
-            }
-            else if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView || dialogView is EventHistoryDialogView)
+            if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView || dialogView is EventHistoryDialogView)
             {
                 _logger.Info(
                     "[PlaylistManagementPageView] {0} closed — refreshing Tab 1",
@@ -304,6 +291,9 @@ namespace ListProtection.UI.PlaylistManagement
                 ContentData = BuildOptions();
                 RaiseUIViewInfoChanged();
             }
+            // UnprotectConfirmDialogView is handled inline — on name match it executes
+            // the unprotect and returns the parent page view directly from RunCommand,
+            // so OnDialogResult is never reached for that dialog.
 
             base.OnDialogResult(dialogView, completedOk, data);
         }
@@ -450,13 +440,26 @@ namespace ListProtection.UI.PlaylistManagement
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
-                // Status: GT/MM/MC  — member count / missing count / candidate count
+                // Status: GT/MM/MC
+                // GT = ground truth member count
+                // MM = missing member count
+                // MC = count of missing members that have at least one candidate (max 1 per missing member, so MC <= MM always)
                 var memberCount = gtEntry?.Members?.Count ?? 0;
-                var missingCount = missingRecords.Count(r =>
-                    string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase));
-                var candidateCount = ListProtectionPlugin.Instance.CandidateStore.Load().Count(c =>
-                    string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase));
-                var status = memberCount + "/" + missingCount + "/" + candidateCount;
+                var playlistMissing = missingRecords
+                    .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var missingCount = playlistMissing.Count;
+                var allCandidates = ListProtectionPlugin.Instance.CandidateStore.Load();
+                var candidateCoveredCount = 0;
+                foreach (var mr in playlistMissing)
+                {
+                    var hasCandidate = allCandidates.Any(c =>
+                        string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase) &&
+                        mr.Member != null &&
+                        c.MissingMember?.InternalId == mr.Member.InternalId);
+                    if (hasCandidate) candidateCoveredCount++;
+                }
+                var status = memberCount + "/" + missingCount + "/" + candidateCoveredCount;
 
                 // Single-row detail for the child grid (troubleshooting metadata)
                 var detailRows = new[]

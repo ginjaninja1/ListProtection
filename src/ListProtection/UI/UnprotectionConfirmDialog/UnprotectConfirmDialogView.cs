@@ -5,40 +5,62 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
 using MediaBrowser.Model.Serialization;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace ListProtection.UI.UnprotectConfirmDialog
 {
     /// <summary>
     /// Confirm dialog for unprotecting a playlist.
-    /// Launched from PlaylistManagementPageView when IsProtected is unticked.
     ///
-    /// User must type the playlist name and press "Unprotect" (commandId="ConfirmUnprotect").
-    /// If the name matches (case-insensitive), Confirmed is set and the dialog closes
-    /// by returning Task.FromResult(null) — NOT via base.RunCommand, which throws
-    /// "Command is not implemented" when called with an unrecognised commandId.
+    /// ONE-BUTTON CLOSE — proven via decompile of PluginDialogViewHost + DialogViewBase:
     ///
-    /// OnDialogResult on the parent page view checks Confirmed and completes the action.
+    ///   PluginDialogViewHost.RunCommand calls our RunCommand first.
+    ///   If we return non-null, CreateUIViewHost wraps it.
+    ///   If we return OriginalUIView.PluginUIView (the parent page view),
+    ///   CreateUIViewHost matches it and returns OriginalUIView — navigating
+    ///   straight back to Tab 1. No OK button, no OnDialogResult needed.
+    ///
+    ///   DialogViewBase.IsCommandAllowed only passes "DialogCancel"/"DialogOk".
+    ///   All other commandIds are blocked at that layer — BUT only reached
+    ///   when our RunCommand returns null. Returning non-null bypasses it entirely.
+    ///
+    /// Flow:
+    ///   1. User types name, presses "Check" (commandId="ConfirmUnprotect").
+    ///   2. Name matches → execute unprotect immediately → rebuild parent ContentData
+    ///      → return parentPageView. Framework navigates to Tab 1 in one step.
+    ///   3. Name doesn't match → show error, return this (stay open).
+    ///   4. Cancel → base.RunCommand("DialogCancel") → DialogViewBase handles it.
     /// </summary>
     internal sealed class UnprotectConfirmDialogView : PluginDialogView
     {
         private readonly string _playlistId;
         private readonly string _playlistName;
+        private readonly IPluginUIView _parentPageView;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
 
-        public bool Confirmed { get; private set; }
+        // Callbacks executed on confirmed unprotect — avoids circular dependency
+        // on PlaylistManagementPageView. The parent passes lambdas at construction.
+        private readonly Action _executeUnprotect;
+        private readonly Action _rebuildParentContent;
 
         public UnprotectConfirmDialogView(
             PluginInfo pluginInfo,
             string playlistId,
             string playlistName,
+            IPluginUIView parentPageView,
+            Action executeUnprotect,
+            Action rebuildParentContent,
             IJsonSerializer jsonSerializer,
             ILogger logger)
             : base(pluginInfo.Id)
         {
             _playlistId = playlistId;
             _playlistName = playlistName;
+            _parentPageView = parentPageView;
+            _executeUnprotect = executeUnprotect;
+            _rebuildParentContent = rebuildParentContent;
             _jsonSerializer = jsonSerializer;
             _logger = logger;
 
@@ -49,7 +71,8 @@ namespace ListProtection.UI.UnprotectConfirmDialog
             ContentData = new UnprotectConfirmDialogUI
             {
                 ExpectedName = playlistName,
-                ConfirmName = string.Empty
+                ConfirmName = string.Empty,
+                ValidationStatus = string.Empty
             };
         }
 
@@ -64,13 +87,11 @@ namespace ListProtection.UI.UnprotectConfirmDialog
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
             _logger.Info(
-                "[UnprotectConfirmDialogView] RunCommand | commandId={0} | itemId={1}",
-                commandId ?? "(null)", itemId ?? "(null)");
+                "[UnprotectConfirmDialogView] RunCommand | commandId={0}",
+                commandId ?? "(null)");
 
             if (string.Equals(commandId, "ConfirmUnprotect", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.Info("[UnprotectConfirmDialogView] ConfirmUnprotect received — deserialising data");
-
                 try
                 {
                     var ui = _jsonSerializer.DeserializeFromString<UnprotectConfirmDialogUI>(data);
@@ -84,21 +105,28 @@ namespace ListProtection.UI.UnprotectConfirmDialog
                             _playlistName,
                             StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.Info("[UnprotectConfirmDialogView] Name matched — confirmed, closing dialog");
-                        Confirmed = true;
-                        // Return null directly — closes the dialog and triggers OnDialogResult.
-                        // Do NOT call base.RunCommand here; it throws "Command is not implemented"
-                        // for commandIds the framework does not own (e.g. "ConfirmUnprotect").
-                        return Task.FromResult<IPluginUIView>(null);
+                        _logger.Info(
+                            "[UnprotectConfirmDialogView] Name matched — executing unprotect and returning to Tab 1");
+
+                        // Execute unprotect directly here — no OnDialogResult needed
+                        _executeUnprotect();
+
+                        // Rebuild parent Tab 1 content so it reflects the change immediately
+                        _rebuildParentContent();
+
+                        // Return the parent page view. PluginDialogViewHost.CreateUIViewHost
+                        // matches this against OriginalUIView.PluginUIView and returns
+                        // OriginalUIView — navigating straight back to Tab 1.
+                        return Task.FromResult(_parentPageView);
                     }
                     else
                     {
                         _logger.Info("[UnprotectConfirmDialogView] Name did not match — staying open");
-
                         ContentData = new UnprotectConfirmDialogUI
                         {
                             ExpectedName = _playlistName,
-                            ConfirmName = string.Empty
+                            ConfirmName = string.Empty,
+                            ValidationStatus = "✗ Name did not match — try again"
                         };
                         RaiseUIViewInfoChanged();
                         return Task.FromResult<IPluginUIView>(this);
@@ -111,9 +139,20 @@ namespace ListProtection.UI.UnprotectConfirmDialog
                 }
             }
 
-            // Cancel and any other framework-owned commandIds — delegate to base (safe for these)
-            _logger.Info("[UnprotectConfirmDialogView] commandId='{0}' — delegating to base", commandId ?? "(null)");
+            // DialogCancel — rebuild parent content then return it directly,
+            // same as the confirm path. base.RunCommand("DialogCancel") returns
+            // OriginalUIView but the client fails to re-render without fresh ContentData.
+            if (string.Equals(commandId, "DialogCancel", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.Info("[UnprotectConfirmDialogView] DialogCancel — returning to Tab 1");
+                _rebuildParentContent();
+                return Task.FromResult(_parentPageView);
+            }
+
+            // All other commandIds — delegate to base
             return base.RunCommand(itemId, commandId, data);
         }
+
+        public override Task Cancel() => Task.CompletedTask;
     }
 }

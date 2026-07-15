@@ -34,8 +34,8 @@ namespace ListProtection.UI.EventHistoryDialog
                 "Key",
                 false,
                 true,
-                false,
-                false)
+                true,   // search
+                true)   // filter
             {
                 heightMode = DxGridOptions.GridHeightMode.fullHeight,
                 columnAutoWidth = false

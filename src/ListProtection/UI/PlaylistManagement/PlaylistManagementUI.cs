@@ -67,22 +67,33 @@ namespace ListProtection.UI.PlaylistManagement
 
                         case "Name":
                             col.allowEditing = false;
-                            col.width = 300;
+                            // No fixed width — consumes remaining space
                             break;
 
                         case "Status":
                             col.allowEditing = false;
-                            col.width = 80;
+                            col.caption = "Status";
+                            col.width = 100;
                             break;
 
                         case "IsProtected":
-                            col.width = 80;
+                            col.caption = "Prot";
+                            col.width = 75;
                             break;
 
                         case "OpenRepair":
+                            col.caption = "Repr";
+                            col.width = 75;
+                            break;
+
                         case "OpenGroundTruth":
+                            col.caption = "Memb";
+                            col.width = 75;
+                            break;
+
                         case "OpenHistory":
-                            col.width = 40;
+                            col.caption = "Hist";
+                            col.width = 75;
                             break;
                     }
                 }

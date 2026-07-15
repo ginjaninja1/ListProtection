@@ -102,6 +102,11 @@ namespace ListProtection.UI.RepairDialog
                         await HandleCandidateChanged(data);
                         Refresh();
                         return this;
+
+                    case "RepairAll":
+                        await HandleRepairAll();
+                        Refresh();
+                        return this;
                 }
             }
             catch (Exception ex)
@@ -288,6 +293,40 @@ namespace ListProtection.UI.RepairDialog
         }
 
         // ── Row builders ───────────────────────────────────────────────────
+
+        // ── Repair All ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Applies the highest-scoring candidate to every missing member that has one.
+        /// Uses the current in-memory _rows as the source — no data deserialisation needed
+        /// since the button fires with the full UI payload but we only need server state.
+        /// </summary>
+        private async Task HandleRepairAll()
+        {
+            _logger.Info("[RepairDialogView] RepairAll triggered");
+
+            var allKeys = _rows
+                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
+                .Select(r => r.Key)
+                .ToArray();
+
+            if (allKeys.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] RepairAll — no repairable rows");
+                return;
+            }
+
+            var repairRows = BuildRepairRowsForMembers(allKeys);
+
+            if (repairRows.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] RepairAll — no candidates available for any row");
+                return;
+            }
+
+            _logger.Info("[RepairDialogView] RepairAll — executing {0} repair(s)", repairRows.Length);
+            await _repairService.ExecuteRepairs(repairRows);
+        }
 
         private void Refresh()
         {

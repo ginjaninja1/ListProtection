@@ -31,6 +31,17 @@ namespace ListProtection.UI.RepairDialog
     {
         public override string EditorTitle => null;
 
+        /// <summary>
+        /// "Repair All" button — applies the highest-scoring candidate to every
+        /// missing member in one action. Fires commandId "RepairAll".
+        /// Declared before the grid so it renders above it.
+        /// </summary>
+        public ButtonItem RepairAllButton { get; set; } = new ButtonItem("Repair All")
+        {
+            StandardIcon = StandardIcons.Add,
+            CommandId = "RepairAll"
+        };
+
         [GridDataSource(nameof(MissingMemberRows))]
         public DxDataGrid MissingMembersGrid { get; set; }
 
@@ -100,6 +111,7 @@ namespace ListProtection.UI.RepairDialog
                 false,
                 false)
             {
+                heightMode = DxGridOptions.GridHeightMode.auto,
                 columnAutoWidth = true,
                 editing = new DxGridEditing
                 {
@@ -143,7 +155,7 @@ namespace ListProtection.UI.RepairDialog
             options.masterDetail = new DxGridMasterDetail
             {
                 enabled = true,
-                autoExpandAll = true,
+                autoExpandAll = false,
                 childRowsFieldName = "Candidates",
                 detailGridOptions = detailOptions
             };

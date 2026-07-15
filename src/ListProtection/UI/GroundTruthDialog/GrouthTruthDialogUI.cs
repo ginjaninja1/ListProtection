@@ -27,8 +27,8 @@ namespace ListProtection.UI.GroundTruthDialog
                 "Position",
                 false,
                 true,
-                false,
-                false)
+                true,   // search
+                true)   // filter
             {
                 heightMode = DxGridOptions.GridHeightMode.fullHeight,
                 columnAutoWidth = true

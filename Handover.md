@@ -1,4 +1,4 @@
-﻿PLAYLIST PROTECTION PLUGIN - AI HANDOVER DOCUMENT
+PLAYLIST PROTECTION PLUGIN - AI HANDOVER DOCUMENT
 =====================================================
 
 PURPOSE
@@ -64,13 +64,11 @@ NO GUESSING
   Never assume APIs exist, events exist, payload formats exist,
   behaviour exists. Verify everything.
 
-
 REALITY OVERRIDES DESIGN
   If code contradicts this document:
     Code is correct
     Document must be updated
     Assumptions must be corrected
-
 
 PROBE BEFORE PARSE
   When a new runtime value arrives (event payload, command args, etc.)
@@ -202,15 +200,17 @@ IMPLEMENTED AND VERIFIED
     OnCancelCommand overridden with Task.CompletedTask (not base)        PROVEN
     OnOkCommand must NOT call base — throws NotImplementedException      PROVEN
 
-NOT YET DONE
-  Tab 1 PlaylistManagementStore schema enrichment (PlaylistName, M3uPath)
-    — deferred; not blocking anything currently
-  Tab 2 redesign (see CURRENT TASK below)
+  ── TASK 11 — IN PROGRESS (2026-07-15) ────────────────────────────────
+
+Add dismiss all button to Repair Dialog (mirror button behaviour on Unprotect dialog for hoe to ensure button lands on host page/cancel continues to work)
+Fix Event histry for repair (all emmebers listed as "(unknown) → (unknown)")
+make status field on unprotect read only
+make child row on tab 1 start with only as much height as needed.
 
 NOT IMPLEMENTED / FUTURE
-  Tab 2 full redesign — 
   IScheduledTask post-library-scan trigger — DEFERRED
   Tab 3 Configuration UI (placeholder only)
+  Tab 2 redesign — hidden for now, commented out in MainController
 
 
 PROJECT STRUCTURE (ACTUAL)
@@ -239,6 +239,7 @@ STORES (constructed in Plugin.cs as singletons)
   ConfigStore              — file: List Protection.Configuration.json
   MissingMembersStore      — file: List Protection.MissingMembers.json
   CandidateStore           — file: List Protection.Candidates.json
+  EventStore               — file: List Protection.Events.json
 
   IServerEntryPoint implementations access stores via ListProtectionPlugin.Instance.
   Do not construct stores inside lambdas or per-view.
@@ -269,35 +270,49 @@ FILE LAYOUT (ACTUAL)
   Services/
     PlaylistRepairService.cs           <- shared repair logic
   UI/
-    MainController.cs
+    MainController.cs                  <- Tab 2 commented out
     TabPageController.cs
     PlaylistManagement/
-      PlaylistRow.cs                   <- Id, Name, Path, InternalId, IsProtected,
-                                          MemberCount, CapturedAt, RepairAll,
-                                          OpenRepair, OpenGroundTruth, Members[]
-      MemberRow.cs                     <- Name, Path, InternalId (Tab 1 child grid)
-      PlaylistManagementUI.cs          <- master grid + Members detail grid
-      PlaylistManagementPageView.cs    <- RunCommand: ToggleProtection, RepairAll,
-                                          OpenRepair -> RepairDialogView,
-                                          OpenGroundTruth -> GroundTruthDialogView,
-                                          OnDialogResult (both dialog types)
+      PlaylistRow.cs                   <- Id, Name, Status, IsProtected,
+                                          RepairAll (hidden), OpenRepair,
+                                          OpenGroundTruth, OpenHistory,
+                                          Detail[] (PlaylistDetailRow)
+      PlaylistDetailRow.cs             <- PlaylistId, Path, CapturedAt
+      MemberRow.cs                     <- dead code, safe to delete
+      PlaylistManagementUI.cs          <- master grid + Detail child grid
+      PlaylistManagementPageView.cs    <- RunCommand: ToggleProtection,
+                                          OpenRepair, OpenGroundTruth,
+                                          OpenHistory, UnprotectConfirm,
+                                          OnDialogResult (all dialog types),
+                                          BuildRows with GT/MM/MC status
     MissingMembers/
       MissingMemberRow.cs              <- Key, PlaylistName, MemberName, Path,
                                           DetectedAt, Forget (legacy Tab 2),
                                           DismissMember, RepairMember,
                                           IsSynthetic, Candidates[]
-      CandidateRow.cs (CanididateRow.cs) <- Key, CandidateName, CandidatePath,
+      CandidateRow.cs                  <- Key, CandidateName, CandidatePath,
                                           Score, Signals, Repair
       MissingMembersUI.cs
-      MissingMembersPageView.cs        <- RunCommand: RepairMember (-> PlaylistRepairService),
-                                          ForgetMember (dismiss, Tab 2 legacy)
+      MissingMembersPageView.cs        <- Tab 2 (hidden, not deleted)
     RepairDialog/
-      RepairDialogUI.cs                <- EditableObjectBase, master+detail grid
-      RepairDialogView.cs              <- PluginDialogView, full-screen repair dialog
+      RepairDialogUI.cs                <- RepairAll ButtonItem above grid,
+                                          autoExpandAll=false,
+                                          child heightMode=auto
+      RepairDialogView.cs              <- HandleRepairAll added
     GroundTruthDialog/
       GroundTruthMemberRow.cs          <- Position, Name, Path
-      GroundTruthDialogUI.cs           <- EditableObjectBase, read-only grid
-      GroundTruthDialogView.cs         <- PluginDialogView, full-screen members dialog
+      GrouthTruthDialogUI.cs           <- search+filter enabled
+      GroundTruthDialogView.cs
+    EventHistoryDialog/
+      EvenHistoryRow.cs                <- Key, EventType, OccurredAt,
+                                          PayloadSummary, PayloadDetail[]
+      PayloadRow (in same file)        <- Idx, Line
+      EvenHistoryDialogUI.cs           <- master-detail, search+filter
+      EventHistoryDialogView.cs        <- builds summary/detail from payload
+    UnprotectionConfirmDialog/
+      UnprotectConfirmDialogUI.cs      <- ConfirmName string, Check button,
+                                          ValidationStatus label
+      UnprotectConfirmDialogView.cs    <- validates name, closes via DialogOk
     Config/
       ConfigUI.cs                      <- placeholder
       ConfigPageView.cs                <- placeholder
@@ -311,120 +326,18 @@ FILE LAYOUT (ACTUAL)
     MissingMemberEntry.cs
     CandidateStore.cs
     CandidateEntry.cs
+    EventEntry.cs                      <- EventType, PlaylistId, PlaylistName,
+                                          OccurredAt, Payload (newline-delimited)
+    EventStore.cs                      <- append-only, cap 2000, newest-first
 
 
-EMBY PLUGIN UI FRAMEWORK (PROVEN)
-=====================================================
 
---- PLUGIN DIALOG PATTERN (PROVEN — Tasks 9-10, 2026-07-14) ---
-
-  Reference: MetadataCheckerv1/UI/DialogueFullScreenGrid/ +
-             MetadataCheckerv1/UI/Manage/
-
-  Host page (PluginPageView):
-    Bool column on grid row OR ButtonItem with Data1 = "commandId".
-    RunCommand catches the trigger, constructs the dialog view, returns it.
-    OnDialogResult(dialogView, completedOk, data) called when dialog closes.
-      Check dialogView type (not completedOk — that is true even on Cancel).
-      Call RaiseUIViewInfoChanged() to refresh parent after dialog closes.
-
-  Dialog view (PluginDialogView):
-    Extends PluginDialogView (UIBaseClasses/Views/PluginDialogueView.cs).
-    DO NOT MODIFY the base class.
-    Constructor sets: ShowDialogFullScreen=true, AllowOk=false, AllowCancel=true.
-    Caption property override: string shown as dialog title.
-    OnCancelCommand() override: return Task.CompletedTask. Do NOT call base.
-    OnOkCommand() override: return Task.CompletedTask. Do NOT call base.
-      base.OnOkCommand throws NotImplementedException — never call it.
-    RunCommand: handle known commandIds. For ALL unknown commandIds (including
-      "DialogCancel") delegate to base.RunCommand which returns null.
-      Returning null from RunCommand = framework closes the dialog.
-      Returning `this` keeps dialog open — wrong for close/cancel.
-    RaiseUIViewInfoChanged() refreshes dialog content after mutations.
-    ContentData must be EditableObjectBase (not EditableOptionsBase).
-
-  PROVEN behaviours:
-    Returning a PluginDialogView from host RunCommand opens the dialog.
-    base.RunCommand() returns Task.FromResult<IPluginUIView>(null) — closes dialog.
-    Parent OnDialogResult fires when dialog closes.
-    Grid commandIds inside dialog fire dialog's own RunCommand.
-    completedOk=true even on Cancel — check dialogView type to distinguish.
-    Read-only dialog: no onChangeCommand needed, all RunCommand calls go to base.
-
---- MULTIPLE COMMANDIDS PER PAGE (PROVEN — Task 9, 2026-07-13) ---
-
-  One DxDataGrid = one onChangeCommand = one commandId.
-  Master grid and detail (child) grid can have DIFFERENT commandIds.
-  Action type distinguished by which field changed in round-trip data.
-  itemId is always null from DxDataGrid cell edits.
-
---- DxDataGrid MASTER-DETAIL (PROVEN — Tasks 7/8) ---
-
-  options.masterDetail = new DxGridMasterDetail
-  {
-      enabled = true,
-      autoExpandAll = false,      // or true for dialog views
-      childRowsFieldName = "FieldName",  // matches property name on row class
-      detailGridOptions = detailOptions  // separate DxGridOptions for child
-  }
-  Child grid column with isSecondaryGridDataSource = true links the data.
-  Detail grid needs its own editing + onChangeCommand to be interactive.
-
---- RunCommand PAYLOAD (PROVEN) ---
-
-  itemId    — always null from DxDataGrid cell edit. Ignore.
-  commandId — arrives as set in DxGridOnChangeCommand.commandId.
-  data      — entire ContentData serialised as JSON.
-              Deserialise as full UI class and inspect rows.
-
---- IPlaylistManager (PROVEN — Task 8) ---
-
-  AddToPlaylist async overload:
-    await _playlistManager.AddToPlaylist(
-        playlist as Playlist,
-        candidateItemIds,
-        skipDuplicates: true,
-        user: user,
-        cancellationToken: CancellationToken.None);
-
-  CreatePlaylist:
-    result = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-    {
-        Name = playlistName,
-        ItemIdList = candidateItemIds,
-        MediaType = "Audio",
-        User = user,
-        IsPublic = true
-    });
-    result.Id = InternalId string (NOT Guid). Resolve Guid via GetItemList.
-
-  PlaylistItemsAdded fires SYNCHRONOUSLY during await — do not rely on it
-  for ground truth update. Write directly after the call.
-
---- IUserManager (PROVEN — Task 8) ---
-
-  var user = _userManager.GetUserList(new UserQuery())[0];
-  Single server user, InternalId=1, IsAdministrator=true.
-
---- GHOST PLAYLIST DETECTION (PROVEN — Task 9) ---
-
-  var allPlaylists = _libraryManager.GetItemList(new InternalItemsQuery
-  {
-      IncludeItemTypes = new[] { "Playlist" },
-      Recursive = true
-  });
-  var liveIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-  foreach (var p in allPlaylists) liveIds.Add(p.Id.ToString("N"));
-  var isGhost = !liveIds.Contains(playlistId);
-
-  Ghost playlists show "[Will be recreated]" in Tab 2 group header.
-  Repair of ghost playlist uses CreatePlaylist (not AddToPlaylist).
 
 
 STORAGE ARCHITECTURE
 =====================================================
 
-PATTERN B — Plain store (no base class) for playlist data, configuration data might be "baseplugin<t>" type.
+PATTERN B — Plain store (no base class).
   Constructor: (IApplicationHost applicationHost, ILogger logger, string pluginFullName)
   File path: applicationHost.Resolve<IApplicationPaths>().PluginConfigurationsPath
   Serialiser: applicationHost.Resolve<IJsonSerializer>()
@@ -446,6 +359,20 @@ GROUND TRUTH ENTRY SHAPE
     Path            string    — at capture time
     ListItemEntryId long      — for correlating PlaylistItemsRemoved events
 
+EVENT ENTRY SHAPE
+
+  EventEntry
+    EventType       string    — Protect | Unprotect | MissingDetected |
+                               CandidateFound | CandidateRefresh | Repair
+    PlaylistId      string    — Guid "N"
+    PlaylistName    string    — at event time
+    OccurredAt      DateTime  — UTC
+    Payload         string    — newline-delimited detail lines
+                               empty string for events with no item detail
+
+  EventStore: append-only, cap 2000 entries, newest-first.
+  LoadForPlaylist(playlistId) returns filtered list for a single playlist.
+
 CANDIDATE SCORING SIGNALS
   FilenameStemExact       100
   FilenameStemNormalized   80
@@ -466,87 +393,81 @@ VERIFIED EMBY BEHAVIOURAL LEARNINGS
   DxDataGrid cell edit: commandId = grid-level value, itemId = null  PROVEN
   Multiple bool columns disambiguated by field values in round-trip  PROVEN
   base.RunCommand() returns null = framework closes dialog        PROVEN Task 10
+  base.RunCommand() returns null for ANY commandId unconditionally PROVEN (decompile)
   OnCancelCommand/OnOkCommand must NOT call base (base throws)    PROVEN Task 10
   OnDialogResult completedOk=true even on Cancel                  PROVEN Task 10
   Check dialogView type, not completedOk, to identify dialog      PROVEN Task 10
   RaiseUIViewInfoChanged() required to refresh dialog content     PROVEN Task 9
   Read-only dialog needs no onChangeCommand                       PROVEN Task 10
+  Custom commandId ("ConfirmUnprotect") crashes framework before  PROVEN Task 11
+    reaching base.RunCommand — PageControllerHostBase rejects it
+  ButtonItem CommandId fires dialog RunCommand with full payload   PROVEN Task 11
+    (confirmed via ArtistDashboardDialogView BatchApprove pattern)
+  StandardIcons.Check does not exist — use StandardIcons.Add      PROVEN (source)
 
 
 UI DESIGN (CURRENT STATE)
 =====================================================
 
 TAB 1 - MANAGED PLAYLISTS
-  Grid: all playlists, one row each
-  Columns: Name, Path, InternalId, Protected (editable), Member Count, Captured,
-           Repair All (editable), Repair... (editable), Members... (editable)
-  Child grid (expand row): ground truth members — Position, Name, Path, read-only
+  Grid columns: Playlist (flex), Status "GT/MM/MC" (75px),
+                Prot (75px), Repr (75px), Memb (75px), Hist (75px)
+  Hidden: Id, InternalId, RepairAll, Detail
+  Child row (expand): PlaylistDetailRow — PlaylistId, Path, CapturedAt
   Actions:
-    IsProtected toggle -> ReconcileGroundTruth
-    RepairAll=true -> picks strongest candidate per missing member, repairs all
-    OpenRepair=true -> launches RepairDialogView full-screen
-    OpenGroundTruth=true -> launches GroundTruthDialogView full-screen
-  OnDialogResult -> refreshes Tab 1 (handles both dialog types)
+    IsProtected untick -> launches UnprotectConfirmDialogView
+    IsProtected tick   -> ReconcileGroundTruth, writes Protect event
+    Repr (OpenRepair)  -> launches RepairDialogView (protected only)
+    Memb (OpenGroundTruth) -> launches GroundTruthDialogView (protected only)
+    Hist (OpenHistory) -> launches EventHistoryDialogView (protected only)
+  OnDialogResult -> refreshes Tab 1 (handles all dialog types)
+  Action columns always visible; server-side guard ignores clicks
+    on unprotected rows (per-row col visibility not supported)
 
-REPAIR DIALOG (from Tab 1 OpenRepair)
+REPAIR DIALOG (from Tab 1 Repr)
   Full-screen, caption "Repair: {playlistName}"
+  RepairAll ButtonItem above grid (CommandId="RepairAll")
   Master grid: missing members
-    Columns: MemberName, Path, DetectedAt, Repair (RepairMember), Dismiss (DismissMember)
-    autoExpandAll=true
+    Columns: MemberName, Path, DetectedAt, Repr (RepairMember), Dismiss (DismissMember)
+    autoExpandAll=false
   Detail grid: candidates per member
     Columns: Candidate, Path, Score, Signals, Repair
-    Sorted by Score descending
+    heightMode=auto, sorted by Score descending
   Actions:
+    RepairAll button  -> repairs all missing members with best candidate
     RepairMember=true -> strongest candidate -> PlaylistRepairService
     DismissMember=true -> removed from MissingMembersStore, GroundTruthStore, CandidateStore
     Repair=true (candidate) -> specific candidate -> PlaylistRepairService
   Close -> Tab 1 OnDialogResult refreshes
 
-GROUND TRUTH DIALOG (from Tab 1 OpenGroundTruth)
+GROUND TRUTH DIALOG (from Tab 1 Memb)
   Full-screen, caption "Members: {playlistName}"
   Single read-only grid: Position (#), Track (Name), Path
-  Sorted by Position ascending
-  No actions — close only
-  Close -> Tab 1 OnDialogResult refreshes
+  Search + filter enabled
+  Sorted by Position ascending — close only
 
-TAB 2 - MISSING MEMBERS (LEGACY — will be redesigned, see CURRENT TASK)
-  Current state: working, repair delegates to PlaylistRepairService
-  Ghost playlists show "[Will be recreated]" in group header
-  Dismiss (was: Forget) removes from MissingMembersStore + GroundTruthStore
+EVENT HISTORY DIALOG (from Tab 1 Hist)
+  Full-screen, caption "History: {playlistName}"
+  Master grid: Type | When | Detail (summary)
+    Search + filter enabled
+    Detail cell: single track inline, or "Expand to see N tracks"
+  Child grid: one Line per payload entry (expand arrow on multi-track events)
+  Read-only — close only
+
+UNPROTECT CONFIRM DIALOG (from Prot untick)
+  Small dialog, caption "Unprotect: {playlistName}"
+  ConfirmName string field + Check button (CommandId="ConfirmUnprotect")
+  ValidationStatus label for feedback
+  Name match: Confirmed=true → base.RunCommand(itemId,"DialogOk",data) [ASSUMED close]
+  Name mismatch: field cleared, error status shown, stays open
+  OnDialogResult: completedOk && Confirmed → executes unprotect + writes event
+  Fallback if DialogOk fails: AllowOk enabled after match, user presses OK
+
+TAB 2 - MISSING MEMBERS (HIDDEN)
+  Commented out in MainController — not deleted, can be restored.
 
 TAB 3 - CONFIGURATION
   Placeholder only
-
-
-CURRENT TASK (AUTHORITATIVE)
-=====================================================
-
-TASK 11 TAB 1 and Dialog finessing
-
-Tab 1 - Playlist Management purpose is to provide the following functionality
-Admin able to protect and unprotect playlists
-Admin able to see key metadata about  the playlists: Name, Groundtruth Member qty (GT), Missing Member Qty (MM)|MissingMemeberswithCandidates(above threshold) Qty (MC) (need to use shorthands to minimise screen realesate, outside a dialog dxgrids are small)
-Admin able to open groundtruth and repair dialogs and event history (new) against a playlist via a buton. (Unprotected members shouldnt have these buttons)
-Playlist should have a child row with additional troubleshooting info: PlaylistID, Path, Date of capture.
-Unprotecting a protected playlist should be hard, need to launch a delete dialogue and say "type name of playlist" with delete button (only delete if the playlist name is correct). With name of playlist, data of protection, Groundtruth Member qty, Missing Member Qty|MissingMemeberswithCandidates(above threshold) Qty
-
-
-
-# Event history
-An event record will need wiring up, storage creating.
-## Event types
-Type:PlaylistProtect, Datetime:datetime of protection, Payload: "X members" (doesnt need a drill down), Playlist:Playlist name
-Type:PlaylistUnprotect, Datetime:datetime of unprotection, Payload: [blank], Playlist:Playlist name
-Type:MissingMemberDetected (per scan task), DateTime:scan datetime, Payload:"the track name, artists, album, groundtruthpath"s,  Playlist:Playlist name
-Type:CandidateFound (per scan task), DateTime:scan datetime, Payload:"internalid, the track name, artists and album, detectedpath"s,  Playlist:Playlist name
-Type:CandiateRefresh (a type of candidate found event where missing members who already have candidates, have their candidate list changed), Payload:"internalid the track name, artists and album, detectedpath"s,  Playlist:Playlist name
-Type:RepairEvent, (per Task or per individual ui event repair1|repairall) Datetime:datetime of repair event, Payload:"internalid, the track name, artists and album,newpath"s, Playlist:PlaylistName 
-
-We want event to carry playlist just in case we ever wanted to show all events for all playlists, but in terms of the event history dialog then playlist would not be surfaced.
-Payloads should be expanded a child row (not 1 per track, all tracks in 1 cell to minimise screen real estate). The parent would be the individual track if singular or "Expand to see tracks" if multiple.
-
-Hide Tab 2 for now no change.
-
 
 
 IMPLEMENTATION ROADMAP (STATUS)
@@ -562,20 +483,27 @@ IMPLEMENTATION ROADMAP (STATUS)
 8.  Repair workflow                                      COMPLETE
 9.  Tab 1 enhancements + Repair dialog                   COMPLETE
 10. Ground Truth dialog (Step 1)                         COMPLETE
-11. Tab and Dialogue Finneshing                    NEXT
-....
-20. Design for Automating Missing member and candiate establishment appropriately in a timely but ultimately reliable manner against.
-21. Design for automatic fix path for scores exceed threshold.
-22. Implementation nascent configuration ui and surface. Autofix threshold. Enabled y/n (turn off futher automation/load behind the scenes)
+11. Tab and Dialog Finessing                             COMPLETE
+12
+...
+20. Design for automating missing member and candidate establishment.
+21. Design for automatic fix path for scores exceeding threshold.
+22. Implement nascent configuration UI. Autofix threshold. Enabled y/n.
 23. Implement automatic fix pathway for scores exceeding threshold.
 
 
-
-
-Test Cases
+OPEN QUESTIONS / DEFERRED INVESTIGATIONS
 =====================================================
 
-
+  PageControllerHostBase commandId routing — NOT decompiled.
+    The DLL is at Tim's Emby install:
+      C:\Users\Nicholas Bird\AppData\Roaming\Emby-Server\system\Emby.Web.GenericUI.dll
+    Decompiling this would definitively answer:
+      - Which commandIds are recognised as valid for dialog routing
+      - Whether "DialogOk" as a synthetic close works
+      - Whether there is any path to close a dialog from a custom button commandId
+    Without this, the "ConfirmUnprotect crash" behaviour is proven but the
+    underlying mechanism is assumed.
 
 
 SESSION COMPLETION RULE
@@ -601,23 +529,22 @@ FUTURE IDEAS (NOT MVP)
 
   Ground truth restore prompt — when a playlist is re-ticked and a
     soft-deleted snapshot exists, prompt user to restore or start fresh.
-    Requires investigation of Emby confirmation dialog support.
 
-  Consideration on wether json storage is robust enough? neccessary to move to sqlite?
+  Consideration on whether JSON storage is robust enough — SQLite?
 
   Playlist recovery from Emby m3u files
   Advanced matching rules / confidence scoring
   Post-library-scan trigger for DetectMissingMembersTask
-    (add TaskTriggerInfo for AfterLibraryScan once trigger type confirmed from DLL)
 
   MissingMemberDetectionService — timer interval (60 min) is a constant.
     Future: expose via ConfigStore for user tuning via Tab 3.
 
   PlaylistMaintenanceService — _pendingAdds never purged on server crash.
-    Low risk in practice — stale entries cost nothing, next capture re-syncs.
+    Low risk in practice.
 
-  CandidateRefreshTask.cs — unknown content, unreviewed. Either integrate
-    or delete once purpose is established.
+  CandidateRefreshTask.cs — unknown content, unreviewed.
+
+  MemberRow.cs — dead code (replaced by PlaylistDetailRow). Safe to delete.
 
 These are explicitly deferred.
 

@@ -450,9 +450,13 @@ namespace ListProtection.UI.PlaylistManagement
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
-                // Count missing members for this playlist
+                // Status: GT/MM/MC  — member count / missing count / candidate count
+                var memberCount = gtEntry?.Members?.Count ?? 0;
                 var missingCount = missingRecords.Count(r =>
                     string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase));
+                var candidateCount = ListProtectionPlugin.Instance.CandidateStore.Load().Count(c =>
+                    string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase));
+                var status = memberCount + "/" + missingCount + "/" + candidateCount;
 
                 // Single-row detail for the child grid (troubleshooting metadata)
                 var detailRows = new[]
@@ -472,8 +476,7 @@ namespace ListProtection.UI.PlaylistManagement
                     Id = idString,
                     InternalId = item.InternalId,
                     Name = item.Name ?? "(unnamed)",
-                    MemberCount = gtEntry?.Members?.Count ?? 0,
-                    MissingCount = missingCount,
+                    Status = status,
                     IsProtected = isProtected,
                     RepairAll = false,
                     OpenRepair = false,

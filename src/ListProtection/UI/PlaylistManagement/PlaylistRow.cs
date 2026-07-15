@@ -5,27 +5,17 @@ namespace ListProtection.UI.PlaylistManagement
     /// <summary>
     /// Plain row class — NOT EditableOptionsBase.
     /// Bound to DxDataGrid via [GridDataSource] on PlaylistManagementUI.
-    /// Id must be Guid "N" format string to match Emby's item.Id.ToString("N").
     ///
-    /// Probe result (Task 9):
-    ///   commandId is always the single grid-level value ("PlaylistAction").
-    ///   Action disambiguation is done by inspecting which field changed in the
-    ///   round-trip data — same pattern as Tab 2 (Forget vs Repair).
-    ///   itemId is always null.
+    /// Status column: amalgamates GT member count / missing count / candidate count
+    /// as "GT/MM/MC" string. For unprotected: "XX/0/0".
     ///
-    /// Actions:
-    ///   IsProtected  — toggle protection; requires confirm dialog when unticking
-    ///   RepairAll    — when true on a row, apply best candidate per missing member
-    ///   OpenRepair   — launch RepairDialogView for this playlist (protected only)
-    ///   OpenGroundTruth — launch GroundTruthDialogView (protected only)
-    ///   OpenHistory  — launch EventHistoryDialogView (protected only)
-    ///
-    /// Detail — child grid data source (isSecondaryGridDataSource = true).
-    ///   Single row showing playlist metadata for troubleshooting. Read-only.
+    /// Action bool columns (R, M, H) are always editable by the framework — per-row
+    /// conditional editing is not supported. Server-side handlers ignore clicks on
+    /// unprotected playlists. RepairAll removed from grid (hidden).
     /// </summary>
     public class PlaylistRow
     {
-        // ── Hidden identity fields ─────────────────────────────────────────
+        // ── Hidden identity ────────────────────────────────────────────────
 
         [DisplayName("Id")]
         public string Id { get; set; }
@@ -38,28 +28,30 @@ namespace ListProtection.UI.PlaylistManagement
         [DisplayName("Playlist")]
         public string Name { get; set; }
 
-        [DisplayName("GT")]
-        public int MemberCount { get; set; }
-
-        [DisplayName("MM")]
-        public int MissingCount { get; set; }
+        /// <summary>
+        /// GT/MM/MC summary — e.g. "12/2/4" or "8/0/0" for unprotected.
+        /// </summary>
+        [DisplayName("Status")]
+        public string Status { get; set; }
 
         // ── Editable action columns ────────────────────────────────────────
 
         [DisplayName("Protected")]
         public bool IsProtected { get; set; }
 
-        [DisplayName("Repair All")]
-        public bool RepairAll { get; set; }
-
-        [DisplayName("Repair…")]
+        [DisplayName("R")]
         public bool OpenRepair { get; set; }
 
-        [DisplayName("Members…")]
+        [DisplayName("M")]
         public bool OpenGroundTruth { get; set; }
 
-        [DisplayName("History…")]
+        [DisplayName("H")]
         public bool OpenHistory { get; set; }
+
+        // ── RepairAll kept as hidden field for server logic only ───────────
+        // Not shown in grid — triggered via a future mechanism if needed.
+        [DisplayName("RepairAll")]
+        public bool RepairAll { get; set; }
 
         // ── Child grid data source ─────────────────────────────────────────
 

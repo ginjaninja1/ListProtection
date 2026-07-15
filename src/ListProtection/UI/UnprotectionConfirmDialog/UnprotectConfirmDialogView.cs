@@ -14,17 +14,11 @@ namespace ListProtection.UI.UnprotectConfirmDialog
     /// Launched from PlaylistManagementPageView when IsProtected is unticked.
     ///
     /// User must type the playlist name and press "Unprotect" (commandId="ConfirmUnprotect").
-    /// If the name matches (case-insensitive), the page view is signalled via
-    /// OnDialogResult to complete the unprotect action. If it doesn't match, the
-    /// dialog stays open with no action.
+    /// If the name matches (case-insensitive), Confirmed is set and the dialog closes
+    /// by returning Task.FromResult(null) — NOT via base.RunCommand, which throws
+    /// "Command is not implemented" when called with an unrecognised commandId.
     ///
-    /// Any other commandId (e.g. "DialogCancel") delegates to base.RunCommand → closes dialog.
-    ///
-    /// PROBE NOTE: ButtonItem CommandId in a dialog, and string field serialisation in
-    /// EditableObjectBase dialogs, are unproven at this SDK version. Detailed logging
-    /// is present to surface any deviations at runtime.
-    ///
-    /// Result signalling: sets Confirmed=true on close so OnDialogResult can check it.
+    /// OnDialogResult on the parent page view checks Confirmed and completes the action.
     /// </summary>
     internal sealed class UnprotectConfirmDialogView : PluginDialogView
     {
@@ -33,10 +27,6 @@ namespace ListProtection.UI.UnprotectConfirmDialog
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
 
-        /// <summary>
-        /// True if the user typed the name correctly and pressed Unprotect.
-        /// Checked by PlaylistManagementPageView.OnDialogResult.
-        /// </summary>
         public bool Confirmed { get; private set; }
 
         public UnprotectConfirmDialogView(
@@ -94,14 +84,17 @@ namespace ListProtection.UI.UnprotectConfirmDialog
                             _playlistName,
                             StringComparison.OrdinalIgnoreCase))
                     {
-                        _logger.Info("[UnprotectConfirmDialogView] Name matched — confirmed");
+                        _logger.Info("[UnprotectConfirmDialogView] Name matched — confirmed, closing dialog");
                         Confirmed = true;
+                        // Return null directly — closes the dialog and triggers OnDialogResult.
+                        // Do NOT call base.RunCommand here; it throws "Command is not implemented"
+                        // for commandIds the framework does not own (e.g. "ConfirmUnprotect").
+                        return Task.FromResult<IPluginUIView>(null);
                     }
                     else
                     {
                         _logger.Info("[UnprotectConfirmDialogView] Name did not match — staying open");
 
-                        // Refresh the dialog with a hint
                         ContentData = new UnprotectConfirmDialogUI
                         {
                             ExpectedName = _playlistName,
@@ -116,13 +109,10 @@ namespace ListProtection.UI.UnprotectConfirmDialog
                     _logger.ErrorException("[UnprotectConfirmDialogView] Failed to deserialise data", ex);
                     return Task.FromResult<IPluginUIView>(this);
                 }
-
-                // Confirmed — close the dialog (base.RunCommand returns null)
-                return base.RunCommand(itemId, commandId, data);
             }
 
-            // All other commands (DialogCancel etc.) — close dialog without confirming
-            _logger.Info("[UnprotectConfirmDialogView] Unhandled commandId '{0}' — delegating to base (closes dialog)", commandId ?? "(null)");
+            // Cancel and any other framework-owned commandIds — delegate to base (safe for these)
+            _logger.Info("[UnprotectConfirmDialogView] commandId='{0}' — delegating to base", commandId ?? "(null)");
             return base.RunCommand(itemId, commandId, data);
         }
     }

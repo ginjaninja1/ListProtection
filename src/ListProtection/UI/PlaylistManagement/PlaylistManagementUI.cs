@@ -9,16 +9,17 @@ namespace ListProtection.UI.PlaylistManagement
     /// <summary>
     /// UI definition for Tab 1 — Managed Playlists.
     ///
-    /// Master grid: one row per playlist in the Emby library.
-    ///   Read-only columns: Name, GT (member count), MM (missing count).
-    ///   Hidden columns: Id, InternalId.
-    ///   Editable columns: IsProtected, RepairAll, OpenRepair, OpenGroundTruth, OpenHistory.
-    ///   Editable columns are disabled (allowEditing=false) for unprotected rows at the
-    ///   action level — the columns are always visible but clicks are no-ops for
-    ///   unprotected playlists (framework does not support per-row conditional visibility).
+    /// Columns (left to right):
+    ///   Playlist (Name)   — wide, read-only
+    ///   Status            — "GT/MM/MC" summary string, read-only, narrow
+    ///   Protected         — bool toggle
+    ///   R                 — OpenRepair bool (protected only, server-side guard)
+    ///   M                 — OpenGroundTruth bool (protected only)
+    ///   H                 — OpenHistory bool (protected only)
     ///
-    /// Detail grid: single-row PlaylistDetailRow showing PlaylistId, Path, CapturedAt.
-    ///   Read-only. Bound via PlaylistRow.Detail (isSecondaryGridDataSource = true).
+    /// Hidden: Id, InternalId, RepairAll, Detail (child grid source).
+    ///
+    /// Detail child grid: PlaylistDetailRow — PlaylistId, Path, GT Captured.
     /// </summary>
     public class PlaylistManagementUI : EditableOptionsBase
     {
@@ -32,7 +33,6 @@ namespace ListProtection.UI.PlaylistManagement
 
         public static PlaylistManagementUI Build(PlaylistRow[] rows)
         {
-            // ── Master grid options ────────────────────────────────────────
             var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, false, false)
             {
                 editing = new DxGridEditing
@@ -40,10 +40,10 @@ namespace ListProtection.UI.PlaylistManagement
                     mode = DxGridEditing.GridEditMode.cell,
                     allowUpdating = true
                 },
-                onChangeCommand = new DxGridOnChangeCommand { commandId = "PlaylistAction" }
+                onChangeCommand = new DxGridOnChangeCommand { commandId = "PlaylistAction" },
+                columnAutoWidth = false
             };
 
-            // ── Master column post-processing ──────────────────────────────
             if (options.columns != null)
             {
                 foreach (var col in options.columns)
@@ -54,13 +54,8 @@ namespace ListProtection.UI.PlaylistManagement
                     {
                         case "Id":
                         case "InternalId":
+                        case "RepairAll":
                             col.visible = false;
-                            col.allowEditing = false;
-                            break;
-
-                        case "Name":
-                        case "MemberCount":
-                        case "MissingCount":
                             col.allowEditing = false;
                             break;
 
@@ -70,18 +65,30 @@ namespace ListProtection.UI.PlaylistManagement
                             col.isSecondaryGridDataSource = true;
                             break;
 
+                        case "Name":
+                            col.allowEditing = false;
+                            col.width = 300;
+                            break;
+
+                        case "Status":
+                            col.allowEditing = false;
+                            col.width = 80;
+                            break;
+
                         case "IsProtected":
-                        case "RepairAll":
+                            col.width = 80;
+                            break;
+
                         case "OpenRepair":
                         case "OpenGroundTruth":
                         case "OpenHistory":
-                            // Intentionally editable — leave as default
+                            col.width = 40;
                             break;
                     }
                 }
             }
 
-            // ── Detail grid options — PlaylistDetailRow ────────────────────
+            // ── Detail child grid ──────────────────────────────────────────
             var detailOptions = new DxGridOptions(
                 new PlaylistDetailRow(),
                 "PlaylistId",
@@ -99,7 +106,6 @@ namespace ListProtection.UI.PlaylistManagement
                 }
             }
 
-            // ── Wire master-detail ─────────────────────────────────────────
             options.masterDetail = new DxGridMasterDetail
             {
                 enabled = true,

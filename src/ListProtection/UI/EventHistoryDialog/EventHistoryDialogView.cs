@@ -74,7 +74,8 @@ namespace ListProtection.UI.EventHistoryDialog
                         Key = "synthetic_empty",
                         EventType = "—",
                         OccurredAt = string.Empty,
-                        Payload = "No events recorded for this playlist."
+                        PayloadSummary = "No events recorded for this playlist.",
+                        PayloadDetail = new PayloadRow[0]
                     }
                 });
             }
@@ -83,12 +84,47 @@ namespace ListProtection.UI.EventHistoryDialog
             for (var i = 0; i < events.Count; i++)
             {
                 var e = events[i];
+                var rawPayload = e.Payload ?? string.Empty;
+
+                // Split payload into lines, ignoring blank lines
+                var lines = rawPayload.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+                string summary;
+                PayloadRow[] detail;
+
+                if (lines.Length == 0)
+                {
+                    summary = "—";
+                    detail = new PayloadRow[0];
+                }
+                else if (lines.Length == 1)
+                {
+                    // Single track — show inline, no expand needed
+                    summary = lines[0].Trim();
+                    detail = new PayloadRow[0];
+                }
+                else
+                {
+                    // Multiple tracks — summary invites expansion
+                    summary = "Expand to see " + lines.Length + " tracks";
+                    detail = new PayloadRow[lines.Length];
+                    for (var j = 0; j < lines.Length; j++)
+                    {
+                        detail[j] = new PayloadRow
+                        {
+                            Idx = i + "_" + j,
+                            Line = lines[j].Trim()
+                        };
+                    }
+                }
+
                 rows.Add(new EventHistoryRow
                 {
                     Key = i.ToString(),
                     EventType = e.EventType ?? string.Empty,
                     OccurredAt = e.OccurredAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
-                    Payload = e.Payload ?? string.Empty
+                    PayloadSummary = summary,
+                    PayloadDetail = detail
                 });
             }
 

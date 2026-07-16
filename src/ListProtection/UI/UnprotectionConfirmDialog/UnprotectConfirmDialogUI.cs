@@ -28,19 +28,18 @@ namespace ListProtection.UI.UnprotectConfirmDialog
         [DisplayName("Type the playlist name to confirm")]
         public string ConfirmName { get; set; } = string.Empty;
 
-        public ButtonItem ValidateButton { get; set; } = new ButtonItem("Check")
+        public ButtonItem ValidateButton { get; set; } = new ButtonItem("Unprotect")
         {
-            StandardIcon = StandardIcons.Add,
+            StandardIcon = StandardIcons.Remove,
             CommandId = "ConfirmUnprotect"
         };
 
         /// <summary>
         /// Status label — shown after validation attempt.
-        /// Empty string = not yet attempted.
+        /// Displayed as a CaptionItem (read-only heading element) so it is
+        /// always visible and never editable. Empty string = not yet attempted.
         /// </summary>
-        [DisplayName("Status")]
-        [Browsable(true)]
-        public string ValidationStatus { get; set; } = string.Empty;
+        public CaptionItem ValidationStatus { get; set; } = new CaptionItem(string.Empty);
 
         [Browsable(false)]
         public string ExpectedName { get; set; } = string.Empty;

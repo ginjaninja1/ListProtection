@@ -32,6 +32,8 @@ namespace ListProtection.UI.RepairDialog
         private readonly PluginInfo _pluginInfo;
         private readonly string _playlistId;
         private readonly string _playlistName;
+        private readonly IPluginUIView _parentPageView;
+        private readonly Action _rebuildParentContent;
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly PlaylistManagementStore _playlistStore;
@@ -47,6 +49,8 @@ namespace ListProtection.UI.RepairDialog
             PluginInfo pluginInfo,
             string playlistId,
             string playlistName,
+            IPluginUIView parentPageView,
+            Action rebuildParentContent,
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
             PlaylistManagementStore playlistStore,
@@ -58,6 +62,8 @@ namespace ListProtection.UI.RepairDialog
             _pluginInfo = pluginInfo;
             _playlistId = playlistId;
             _playlistName = playlistName;
+            _parentPageView = parentPageView;
+            _rebuildParentContent = rebuildParentContent;
             _missingMembersStore = missingMembersStore;
             _groundTruthStore = groundTruthStore;
             _playlistStore = playlistStore;
@@ -105,8 +111,13 @@ namespace ListProtection.UI.RepairDialog
 
                     case "RepairAll":
                         await HandleRepairAll();
-                        Refresh();
-                        return this;
+                        _rebuildParentContent();
+                        return _parentPageView;
+
+                    case "DismissAll":
+                        HandleDismissAll();
+                        _rebuildParentContent();
+                        return _parentPageView;
                 }
             }
             catch (Exception ex)
@@ -293,6 +304,32 @@ namespace ListProtection.UI.RepairDialog
         }
 
         // ── Row builders ───────────────────────────────────────────────────
+
+        // ── Dismiss All ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Dismisses all missing members for this playlist — removes from
+        /// MissingMembersStore, GroundTruthStore, and CandidateStore.
+        /// Uses current in-memory _rows as source.
+        /// </summary>
+        private void HandleDismissAll()
+        {
+            _logger.Info("[RepairDialogView] DismissAll triggered");
+
+            var allKeys = _rows
+                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
+                .Select(r => r.Key)
+                .ToArray();
+
+            if (allKeys.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] DismissAll — no dismissable rows");
+                return;
+            }
+
+            _logger.Info("[RepairDialogView] DismissAll — dismissing {0} row(s)", allKeys.Length);
+            DismissMembers(allKeys);
+        }
 
         // ── Repair All ────────────────────────────────────────────────────
 

@@ -358,6 +358,23 @@ namespace ListProtection.Services
                         newGuidN, newMembers.Count);
                 }
 
+                // ── Capture names for event payload BEFORE removing records ──
+                var payloadLines = new List<string>();
+                foreach (var (missingId, candidateId) in repairs)
+                {
+                    var candidate = candidateRecords.Find(c =>
+                        c.CandidateInternalId == candidateId &&
+                        c.MissingMember?.InternalId == missingId);
+                    var missingRecord = missingRecords.Find(r =>
+                        r.Member?.InternalId == missingId);
+
+                    var missingName = missingRecord?.Member?.Name ?? "(unknown)";
+                    var candidateName = candidate?.CandidateName ?? "(unknown)";
+                    var candidatePath = candidate?.CandidatePath ?? string.Empty;
+
+                    payloadLines.Add(missingName + " → " + candidateName + " | " + candidatePath);
+                }
+
                 // Remove repaired missing records
                 for (var i = missingRecords.Count - 1; i >= 0; i--)
                 {
@@ -387,22 +404,6 @@ namespace ListProtection.Services
                 // Write Repair event
                 try
                 {
-                    var payloadLines = new List<string>();
-                    foreach (var (missingId, candidateId) in repairs)
-                    {
-                        var candidate = candidateRecords.Find(c =>
-                            c.CandidateInternalId == candidateId &&
-                            c.MissingMember?.InternalId == missingId);
-                        var missingRecord = missingRecords.Find(r =>
-                            r.Member?.InternalId == missingId);
-
-                        var missingName = missingRecord?.Member?.Name ?? "(unknown)";
-                        var candidateName = candidate?.CandidateName ?? "(unknown)";
-                        var candidatePath = candidate?.CandidatePath ?? string.Empty;
-
-                        payloadLines.Add(missingName + " → " + candidateName + " | " + candidatePath);
-                    }
-
                     ListProtectionPlugin.Instance.EventStore.Append(new EventEntry
                     {
                         EventType = "Repair",

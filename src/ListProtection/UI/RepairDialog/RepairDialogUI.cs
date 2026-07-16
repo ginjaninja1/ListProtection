@@ -42,6 +42,16 @@ namespace ListProtection.UI.RepairDialog
             CommandId = "RepairAll"
         };
 
+        /// <summary>
+        /// "Dismiss All" button — removes all missing members from tracking in one action.
+        /// Fires commandId "DismissAll".
+        /// </summary>
+        public ButtonItem DismissAllButton { get; set; } = new ButtonItem("Dismiss All")
+        {
+            StandardIcon = StandardIcons.Delete,
+            CommandId = "DismissAll"
+        };
+
         [GridDataSource(nameof(MissingMemberRows))]
         public DxDataGrid MissingMembersGrid { get; set; }
 

@@ -1,4 +1,5 @@
-﻿using ListProtection.Storage;
+﻿using Emby.Web.GenericEdit.Elements;
+using ListProtection.Storage;
 using ListProtection.UIBaseClasses.Views;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
@@ -71,8 +72,7 @@ namespace ListProtection.UI.UnprotectConfirmDialog
             ContentData = new UnprotectConfirmDialogUI
             {
                 ExpectedName = playlistName,
-                ConfirmName = string.Empty,
-                ValidationStatus = string.Empty
+                ConfirmName = string.Empty
             };
         }
 
@@ -126,7 +126,7 @@ namespace ListProtection.UI.UnprotectConfirmDialog
                         {
                             ExpectedName = _playlistName,
                             ConfirmName = string.Empty,
-                            ValidationStatus = "✗ Name did not match — try again"
+                            ValidationStatus = new CaptionItem("✗ Name did not match — try again")
                         };
                         RaiseUIViewInfoChanged();
                         return Task.FromResult<IPluginUIView>(this);

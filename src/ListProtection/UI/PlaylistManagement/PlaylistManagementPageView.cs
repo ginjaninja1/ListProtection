@@ -165,6 +165,8 @@ namespace ListProtection.UI.PlaylistManagement
                         _pluginInfo,
                         openRepairRow.Id,
                         playlistName,
+                        this,
+                        () => { ContentData = BuildOptions(); RaiseUIViewInfoChanged(); },
                         ListProtectionPlugin.Instance.MissingMembersStore,
                         _groundTruthStore,
                         _store,

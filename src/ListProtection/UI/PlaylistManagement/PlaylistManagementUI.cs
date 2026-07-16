@@ -106,7 +106,10 @@ namespace ListProtection.UI.PlaylistManagement
                 false,
                 false,
                 false,
-                false);
+                false)
+            {
+                heightMode = DxGridOptions.GridHeightMode.auto
+            };
 
             if (detailOptions.columns != null)
             {

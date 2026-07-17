@@ -5,6 +5,7 @@ using MediaBrowser.Model.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 
 namespace ListProtection.EntryPoints
 {
@@ -44,8 +45,19 @@ namespace ListProtection.EntryPoints
                     return;
                 }
 
-                var groundTruth = plugin.GroundTruthStore.Load();
-                var missing = plugin.MissingMembersStore.Load();
+                plugin.WriterLock.Wait();
+                Dictionary<string, GroundTruthEntry> groundTruth;
+                List<MissingMemberEntry> missing;
+                try
+                {
+                    groundTruth = plugin.GroundTruthStore.Load();
+                    missing = plugin.MissingMembersStore.Load();
+                }
+                finally
+                {
+                    plugin.WriterLock.Release();
+                }
+
                 var changed = false;
 
                 foreach (var kvp in groundTruth)
@@ -164,7 +176,15 @@ namespace ListProtection.EntryPoints
 
                 if (changed)
                 {
-                    plugin.MissingMembersStore.Save(missing);
+                    plugin.WriterLock.Wait();
+                    try
+                    {
+                        plugin.MissingMembersStore.Save(missing);
+                    }
+                    finally
+                    {
+                        plugin.WriterLock.Release();
+                    }
                     logger.Info("[MissingMemberDetector] Detection complete — store updated");
 
                     // Write MissingDetected events — one per affected playlist

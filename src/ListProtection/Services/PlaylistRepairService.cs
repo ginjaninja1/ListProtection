@@ -8,6 +8,7 @@ using MediaBrowser.Model.Querying;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ListProtection.Services
@@ -59,10 +60,25 @@ namespace ListProtection.Services
             var user = _userManager.GetUserList(new UserQuery())[0];
             _logger.Info("[PlaylistRepairService] ExecuteRepairs — user={0}", user.Name);
 
-            var missingRecords = _missingMembersStore.Load();
-            var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();
-            var groundTruth = _groundTruthStore.Load();
-            var protectedIds = _playlistStore.Load();
+            var plugin = ListProtectionPlugin.Instance;
+
+            List<MissingMemberEntry> missingRecords;
+            List<CandidateEntry> candidateRecords;
+            System.Collections.Generic.Dictionary<string, GroundTruthEntry> groundTruth;
+            System.Collections.Generic.HashSet<string> protectedIds;
+
+            plugin.WriterLock.Wait();
+            try
+            {
+                missingRecords = _missingMembersStore.Load();
+                candidateRecords = plugin.CandidateStore.Load();
+                groundTruth = _groundTruthStore.Load();
+                protectedIds = _playlistStore.Load();
+            }
+            finally
+            {
+                plugin.WriterLock.Release();
+            }
 
             // Collect repaired candidates grouped by PlaylistId
             var repairsByPlaylist = new Dictionary<string, List<(long missingInternalId, long candidateInternalId)>>(StringComparer.OrdinalIgnoreCase);
@@ -287,7 +303,9 @@ namespace ListProtection.Services
 
                     protectedIds.Remove(oldPlaylistId);
                     protectedIds.Add(newGuidN);
-                    _playlistStore.Save(protectedIds);
+                    plugin.WriterLock.Wait();
+                    try { _playlistStore.Save(protectedIds); }
+                    finally { plugin.WriterLock.Release(); }
 
                     var migrated = 0;
                     foreach (var record in missingRecords)
@@ -419,21 +437,30 @@ namespace ListProtection.Services
                 }
             }
 
-            // Persist
-            if (groundTruthChanged)
+            // Persist — acquire writer lock for the full save block so all three
+            // stores are updated atomically with respect to other writers
+            plugin.WriterLock.Wait();
+            try
             {
-                _groundTruthStore.Save(groundTruth);
-                _logger.Info("[PlaylistRepairService] GroundTruthStore saved");
+                if (groundTruthChanged)
+                {
+                    _groundTruthStore.Save(groundTruth);
+                    _logger.Info("[PlaylistRepairService] GroundTruthStore saved");
+                }
+                if (missingChanged)
+                {
+                    _missingMembersStore.Save(missingRecords);
+                    _logger.Info("[PlaylistRepairService] MissingMembersStore saved");
+                }
+                if (candidatesChanged)
+                {
+                    plugin.CandidateStore.Save(candidateRecords);
+                    _logger.Info("[PlaylistRepairService] CandidateStore saved");
+                }
             }
-            if (missingChanged)
+            finally
             {
-                _missingMembersStore.Save(missingRecords);
-                _logger.Info("[PlaylistRepairService] MissingMembersStore saved");
-            }
-            if (candidatesChanged)
-            {
-                ListProtectionPlugin.Instance.CandidateStore.Save(candidateRecords);
-                _logger.Info("[PlaylistRepairService] CandidateStore saved");
+                plugin.WriterLock.Release();
             }
 
             _logger.Info("[PlaylistRepairService] ExecuteRepairs complete");

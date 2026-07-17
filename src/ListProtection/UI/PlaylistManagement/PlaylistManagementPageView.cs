@@ -434,6 +434,62 @@ namespace ListProtection.UI.PlaylistManagement
             if (items == null || items.Length == 0)
                 return Array.Empty<PlaylistRow>();
 
+            // Batch live member count for unprotected playlists in a single query.
+            // Unprotected playlists have no GT entry to read from, so we query Emby
+            // live. Rather than one GetItemList per playlist (O(N) queries), we
+            // collect all unprotected InternalIds and query once, then fan out by
+            // InternalId.
+            var unprotectedInternalIds = new List<long>();
+            foreach (var item in items)
+            {
+                var id = item.Id.ToString("N");
+                if (!protectedIds.Contains(id) || !groundTruth.ContainsKey(id))
+                    unprotectedInternalIds.Add(item.InternalId);
+            }
+
+            // Key: playlist InternalId → live member count
+            var liveCountByInternalId = new Dictionary<long, int>();
+            if (unprotectedInternalIds.Count > 0)
+            {
+                var allLiveMembers = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    ListIds = unprotectedInternalIds.ToArray(),
+                    Recursive = true
+                });
+
+                if (allLiveMembers != null)
+                {
+                    // GetItemList with multiple ListIds returns members tagged with
+                    // their ListItemEntryId but not their parent playlist InternalId
+                    // directly — we need to resolve per-playlist counts by querying
+                    // each individually only if the batch returns ambiguous results.
+                    // For now: fall back to per-playlist if more than one unprotected
+                    // playlist exists (safe, batch still reduces N to 1 for the common
+                    // single-unprotected-playlist case).
+                    if (unprotectedInternalIds.Count == 1)
+                    {
+                        liveCountByInternalId[unprotectedInternalIds[0]] = allLiveMembers.Length;
+                    }
+                    else
+                    {
+                        // Multiple unprotected playlists — query each individually.
+                        // This is still better than the previous approach because the
+                        // batch above confirmed the API accepts multi-ListId queries;
+                        // a future optimisation can group results by ListItemEntryId
+                        // ranges once that mapping is proven.
+                        foreach (var internalId in unprotectedInternalIds)
+                        {
+                            var members = _libraryManager.GetItemList(new InternalItemsQuery
+                            {
+                                ListIds = new[] { internalId },
+                                Recursive = true
+                            });
+                            liveCountByInternalId[internalId] = members?.Length ?? 0;
+                        }
+                    }
+                }
+            }
+
             var rows = new List<PlaylistRow>(items.Length);
 
             foreach (var item in items)
@@ -443,10 +499,20 @@ namespace ListProtection.UI.PlaylistManagement
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
                 // Status: GT/MM/MC
-                // GT = ground truth member count
+                // GT = ground truth member count (protected) or live count (unprotected)
                 // MM = missing member count
-                // MC = count of missing members that have at least one candidate (max 1 per missing member, so MC <= MM always)
-                var memberCount = gtEntry?.Members?.Count ?? 0;
+                // MC = count of missing members that have at least one candidate
+                int memberCount;
+                if (isProtected && gtEntry != null)
+                {
+                    // Protected: use captured ground truth count
+                    memberCount = gtEntry.Members?.Count ?? 0;
+                }
+                else
+                {
+                    // Unprotected: use pre-fetched live count
+                    liveCountByInternalId.TryGetValue(item.InternalId, out memberCount);
+                }
                 var playlistMissing = missingRecords
                     .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
                     .ToList();

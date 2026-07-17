@@ -1,15 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <AssemblyName>ListProtection</AssemblyName>
-    <RootNamespace>ListProtection</RootNamespace>
-    <LangVersion>latest</LangVersion>
-	  <Version>0.0.0.1</Version>
-	  <Nullable>annotations</Nullable>
-    
-    
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>netstandard2.0</TargetFramework>
+		<AssemblyName>ListProtection</AssemblyName>
+		<RootNamespace>ListProtection</RootNamespace>
+		<LangVersion>latest</LangVersion>
+		<Version>0.0.0.1</Version>
+		<Nullable>annotations</Nullable>
+
+
+	</PropertyGroup>
 
 	<!-- FIXED: Debug mode now turns off Optimization so breakpoints work properly -->
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -23,19 +23,21 @@
 		<Optimize>True</Optimize>
 	</PropertyGroup>
 	<ItemGroup>
-	  <Compile Remove="Services\PosterCopyService.cs" />
-	  <Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
-	  <Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
+		<Compile Remove="Services\PosterCopyService.cs" />
+		<Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
+		<Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
+		<Compile Remove="EntryPoints\ScanAndAddEventProbe.cs" />
+		<Compile Remove="EntryPoints\Playlisteventprobe.cs" />
 	</ItemGroup>
 	<ItemGroup>
-	  <None Remove="Handover.md" />
-	  <None Remove="Readme.md" />
+		<None Remove="Handover.md" />
+		<None Remove="Readme.md" />
 	</ItemGroup>
-	
-  <ItemGroup>
-	  <PackageReference Include="MediaBrowser.Server.Core" Version="4.9.1.90" />
-    	  <PackageReference Include="System.Memory" Version="4.6.0" />
-  </ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="MediaBrowser.Server.Core" Version="4.9.1.90" />
+		<PackageReference Include="System.Memory" Version="4.6.0" />
+	</ItemGroup>
 	<ItemGroup>
 		<EmbeddedResource Include="thumb.png">
 			<LogicalName>$(RootNamespace).thumb.png</LogicalName>
@@ -47,7 +49,7 @@
 		<!-- Add this line below to suppress the deps.json file -->
 		<GenerateDependencyFile>false</GenerateDependencyFile>
 	</PropertyGroup>
-	
+
 	<Target Name="PostBuild" AfterTargets="PostBuildEvent">
 		<Exec Command="xcopy &quot;$(TargetDir)$(TargetName).*&quot; &quot;$(APPDATA)\Emby-Server\programdata\plugins\&quot; /Y" />
 	</Target>

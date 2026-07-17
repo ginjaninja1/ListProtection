@@ -1,4 +1,5 @@
 ﻿using ListProtection.Storage;
+using System.Threading;
 using ListProtection.UI;
 using MediaBrowser.Common;
 using MediaBrowser.Common.Plugins;
@@ -26,6 +27,16 @@ namespace ListProtection
         private List<IPluginUIPageController> _pages;
 
         public static ListProtectionPlugin Instance { get; private set; }
+
+        /// <summary>
+        /// Process-wide writer lock — all Load→mutate→Save sequences on any store
+        /// must acquire this before loading and release after saving.
+        /// Prevents concurrent writes from PlaylistMaintenanceService, 
+        /// MissingMemberDetectionService, PlaylistRepairService, and UI handlers
+        /// from silently clobbering each other.
+        /// Use: await WriterLock.WaitAsync() / finally WriterLock.Release()
+        /// </summary>
+        public SemaphoreSlim WriterLock { get; } = new SemaphoreSlim(1, 1);
 
         public PlaylistManagementStore PlaylistStore { get; }
         public GroundTruthStore GroundTruthStore { get; }

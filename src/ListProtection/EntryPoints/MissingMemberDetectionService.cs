@@ -3,34 +3,32 @@ using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Logging;
 using System;
 using System.Collections.Generic;
-using System.Threading;
 
 namespace ListProtection.EntryPoints
 {
     /// <summary>
-    /// IServerEntryPoint — detects missing members in protected playlists.
+    /// IServerEntryPoint — fast-path missing member detection.
     ///
-    /// Two detection paths:
+    /// Responsibilities:
+    ///   ItemRemoved fast path: fires RunDetection for affected playlists
+    ///   immediately when a tracked library item is deleted. This is the
+    ///   only real-time detection path needed, since file moves/renames
+    ///   are caught by the post-scan task.
     ///
-    ///   Timer (belt-and-braces): fires RunDetection(null) every 60 minutes.
-    ///   Full scan of all active ground truth entries.
+    /// Periodic sweep:
+    ///   Removed — the 60-min timer is replaced by PostScanDetectionTask,
+    ///   which runs as a proper IScheduledTask after every library scan.
+    ///   Manual runs are available via DetectMissingMembersTask in the
+    ///   Emby dashboard.
     ///
-    ///   Fast path (ILibraryManager.ItemRemoved): fires RunDetection for affected
-    ///   playlists immediately when a tracked item is removed from the library.
-    ///   PROVEN: ItemRemoved payload confirmed (Task 5). Fast path now active.
-    ///
-    /// Detection logic lives in MissingMemberDetector (shared with DetectMissingMembersTask).
-    /// Stores are accessed via ListProtectionPlugin.Instance (DI cannot inject them).
-    /// Constructor mirrors PlaylistMaintenanceService exactly.
+    /// PROVEN behaviours:
+    ///   ItemRemoved payload confirmed (Task 5).
+    ///   ItemRemoved does NOT fire ItemUpdated.
     /// </summary>
     public class MissingMemberDetectionService : IServerEntryPoint
     {
         private readonly ILibraryManager _libraryManager;
         private readonly ILogger _logger;
-
-        private Timer _timer;
-
-        private const int DetectionIntervalMinutes = 60;
 
         public MissingMemberDetectionService(
             ILibraryManager libraryManager,
@@ -44,18 +42,7 @@ namespace ListProtection.EntryPoints
         {
             _libraryManager.ItemRemoved += OnItemRemoved;
 
-            // Fire first detection after a short delay to let Emby fully settle,
-            // then repeat every DetectionIntervalMinutes.
-            var interval = TimeSpan.FromMinutes(DetectionIntervalMinutes);
-            var initialDelay = TimeSpan.FromMinutes(2);
-
-            _timer = new Timer(_ => MissingMemberDetector.RunDetection(null, _libraryManager, _logger),
-                null, initialDelay, interval);
-
-            _logger.Info(
-                "[MissingMemberDetectionService] Started — detection interval: {0} min, initial delay: {1} min",
-                DetectionIntervalMinutes,
-                (int)initialDelay.TotalMinutes);
+            _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved fast path active");
         }
 
         // ── ItemRemoved fast path ──────────────────────────────────────────
@@ -63,9 +50,6 @@ namespace ListProtection.EntryPoints
         /// <summary>
         /// PROVEN (Task 5): ItemRemoved fires with ItemChangeEventArgs.
         /// Item.InternalId is populated and correct for deleted library items.
-        ///
-        /// Fast path: check whether the removed item appears in any active ground
-        /// truth entry. If so, run targeted detection for each affected playlist.
         ///
         /// Guard is essential — ItemRemoved fires for ANY library deletion,
         /// not only playlist members.
@@ -115,10 +99,6 @@ namespace ListProtection.EntryPoints
         public void Dispose()
         {
             _libraryManager.ItemRemoved -= OnItemRemoved;
-
-            _timer?.Dispose();
-            _timer = null;
-
             _logger.Info("[MissingMemberDetectionService] Disposed");
         }
     }

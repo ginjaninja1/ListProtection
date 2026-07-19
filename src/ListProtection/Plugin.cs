@@ -1,7 +1,8 @@
-﻿using ListProtection.Storage;
-using System.Threading;
+﻿using ListProtection.Configuration;
+using ListProtection.Storage;
 using ListProtection.UI;
 using MediaBrowser.Common;
+using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Library;
@@ -14,10 +15,11 @@ using MediaBrowser.Model.Serialization;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 
 namespace ListProtection
 {
-    public class ListProtectionPlugin : BasePlugin, IHasThumbImage, IHasUIPages
+    public class ListProtectionPlugin : BasePlugin<PluginConfiguration>, IHasThumbImage, IHasUIPages
     {
         private readonly IServerApplicationHost _applicationHost;
         private readonly ILogger _logger;
@@ -31,10 +33,10 @@ namespace ListProtection
         /// <summary>
         /// Process-wide writer lock — all Load→mutate→Save sequences on any store
         /// must acquire this before loading and release after saving.
-        /// Prevents concurrent writes from PlaylistMaintenanceService, 
+        /// Prevents concurrent writes from PlaylistMaintenanceService,
         /// MissingMemberDetectionService, PlaylistRepairService, and UI handlers
         /// from silently clobbering each other.
-        /// Use: await WriterLock.WaitAsync() / finally WriterLock.Release()
+        /// Use: plugin.WriterLock.Wait() / finally plugin.WriterLock.Release()
         /// </summary>
         public SemaphoreSlim WriterLock { get; } = new SemaphoreSlim(1, 1);
 
@@ -44,14 +46,15 @@ namespace ListProtection
         public CandidateStore CandidateStore { get; }
         public EventStore EventStore { get; }
 
-        private readonly ConfigStore _configStore;
-
         public ListProtectionPlugin(
+            IApplicationPaths applicationPaths,
+            IXmlSerializer xmlSerializer,
             IServerApplicationHost applicationHost,
             ILogManager logManager,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
             IUserManager userManager)
+            : base(applicationPaths, xmlSerializer)
         {
             _applicationHost = applicationHost;
             _libraryManager = libraryManager;
@@ -60,7 +63,6 @@ namespace ListProtection
             _logger = logManager.GetLogger(this.Name);
 
             PlaylistStore = new PlaylistManagementStore(applicationHost, _logger, this.Name + ".Playlist");
-            _configStore = new ConfigStore(applicationHost, _logger, this.Name + ".Configuration");
             GroundTruthStore = new GroundTruthStore(applicationHost, _logger, this.Name + ".GroundTruth");
             MissingMembersStore = new MissingMembersStore(applicationHost, _logger, this.Name + ".MissingMembers");
             CandidateStore = new CandidateStore(applicationHost, _logger, this.Name + ".Candidates");
@@ -92,7 +94,6 @@ namespace ListProtection
                             PlaylistStore,
                             GroundTruthStore,
                             MissingMembersStore,
-                            _configStore,
                             _libraryManager,
                             _playlistManager,
                             _userManager,

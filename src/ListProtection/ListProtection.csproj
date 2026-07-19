@@ -23,7 +23,11 @@
 		<Optimize>True</Optimize>
 	</PropertyGroup>
 	<ItemGroup>
+		<Compile Remove="Data\Entities\MatchCandidate.cs" />
+		<Compile Remove="Data\Entities\MissingMember.cs" />
+		<Compile Remove="Services\Matching\MatchEvaluator.cs" />
 		<Compile Remove="Services\PosterCopyService.cs" />
+		<Compile Remove="Storage\BasicsOptionsStore.cs" />
 		<Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
 		<Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
 		<Compile Remove="EntryPoints\ScanAndAddEventProbe.cs" />
@@ -41,6 +45,9 @@
 		<EmbeddedResource Include="thumb.png">
 			<LogicalName>$(RootNamespace).thumb.png</LogicalName>
 		</EmbeddedResource>
+	</ItemGroup>
+	<ItemGroup>
+	  <Folder Include="Services\Matching\" />
 	</ItemGroup>
 
 	<PropertyGroup>

@@ -23,7 +23,6 @@ namespace ListProtection.UI
         private readonly PlaylistManagementStore _playlistStore;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly MissingMembersStore _missingMembersStore;
-        private readonly ConfigStore _configStore;
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
         private readonly IUserManager _userManager;
@@ -38,7 +37,6 @@ namespace ListProtection.UI
             PlaylistManagementStore playlistStore,
             GroundTruthStore groundTruthStore,
             MissingMembersStore missingMembersStore,
-            ConfigStore configStore,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
             IUserManager userManager,
@@ -49,7 +47,6 @@ namespace ListProtection.UI
             _playlistStore = playlistStore;
             _groundTruthStore = groundTruthStore;
             _missingMembersStore = missingMembersStore;
-            _configStore = configStore;
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
             _userManager = userManager;
@@ -105,11 +102,13 @@ namespace ListProtection.UI
             //        _repairService)));
 
             // Tab 3 — Configuration
+            // ConfigPageView reads from Plugin.Instance.Configuration directly;
+            // no store reference needed.
             _tabPages.Add(new TabPageController(
                 pluginInfo,
                 "Configuration",
                 "Configuration",
-                info => new ConfigPageView(info, _configStore)));
+                info => new ConfigPageView(info)));
         }
 
         public override PluginPageInfo PageInfo { get; }

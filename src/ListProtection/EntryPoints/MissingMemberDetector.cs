@@ -20,6 +20,10 @@ namespace ListProtection.EntryPoints
     /// ILibraryManager.GetItemList with ListIds — that returns in ListItemEntryId
     /// ascending order which reflects DB insertion order, not playlist position.
     /// Proven by CaptureOrderProbeTask 2026-07-18.
+    ///
+    /// Event payload format (MissingDetected):
+    ///   "[POS X] Track Name | /path/to/file.flac"
+    ///   X = 1-based position in the playlist's ground truth Members list.
     /// </summary>
     internal static class MissingMemberDetector
     {
@@ -108,14 +112,17 @@ namespace ListProtection.EntryPoints
                         foreach (var m in liveMembers)
                             liveIds.Add(m.InternalId);
 
-                    foreach (var member in entry.Members)
+                    // Walk Members by index so we have the ground truth position
+                    for (var pos = 0; pos < entry.Members.Count; pos++)
                     {
+                        var member = entry.Members[pos];
+
                         if (liveIds.Contains(member.InternalId))
                             continue;
 
                         logger.Info(
-                            "[MissingMemberDetector] Member absent from live playlist: '{0}' | InternalId={1} | playlist={2}",
-                            member.Name, member.InternalId, playlistIdN);
+                            "[MissingMemberDetector] Member absent from live playlist: '{0}' | InternalId={1} | pos={2} | playlist={3}",
+                            member.Name, member.InternalId, pos + 1, playlistIdN);
 
                         var alreadyRecorded = false;
                         foreach (var existing in missing)
@@ -160,6 +167,8 @@ namespace ListProtection.EntryPoints
 
                     logger.Info("[MissingMemberDetector] Detection complete — store updated");
 
+                    // Write MissingDetected events grouped by playlist.
+                    // Payload lines include [POS X] prefix using the member's GT position.
                     try
                     {
                         var byPlaylist = new Dictionary<string, List<MissingMemberEntry>>(StringComparer.OrdinalIgnoreCase);
@@ -170,17 +179,28 @@ namespace ListProtection.EntryPoints
                             list.Add(record);
                         }
 
-                        foreach (var kvp in byPlaylist)
+                        foreach (var evKvp in byPlaylist)
                         {
+                            // Get the GT for this playlist to resolve positions
+                            groundTruth.TryGetValue(evKvp.Key, out var gtEntry);
+
                             var payloadLines = new List<string>();
-                            foreach (var r in kvp.Value)
-                                payloadLines.Add((r.Member?.Name ?? "(unnamed)") + " | " + (r.Member?.Path ?? string.Empty));
+                            foreach (var r in evKvp.Value)
+                            {
+                                var pos = GetGroundTruthPosition(r.Member?.InternalId ?? -1, gtEntry);
+                                var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
+                                payloadLines.Add(
+                                    posPrefix +
+                                    (r.Member?.Name ?? "(unnamed)") +
+                                    " | " +
+                                    (r.Member?.Path ?? string.Empty));
+                            }
 
                             plugin.EventStore.Append(new EventEntry
                             {
                                 EventType = "MissingDetected",
-                                PlaylistId = kvp.Key,
-                                PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
+                                PlaylistId = evKvp.Key,
+                                PlaylistName = evKvp.Value[0].PlaylistName ?? string.Empty,
                                 OccurredAt = DateTime.UtcNow,
                                 Payload = string.Join("\n", payloadLines)
                             });
@@ -200,6 +220,21 @@ namespace ListProtection.EntryPoints
             {
                 logger.ErrorException("[MissingMemberDetector] RunDetection failed", ex);
             }
+        }
+
+        // ── Helpers ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the 0-based index of the member in the GT Members list,
+        /// or -1 if not found or gtEntry is null.
+        /// </summary>
+        private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
+        {
+            if (gtEntry?.Members == null || internalId <= 0) return -1;
+            for (var i = 0; i < gtEntry.Members.Count; i++)
+                if (gtEntry.Members[i].InternalId == internalId)
+                    return i;
+            return -1;
         }
     }
 }

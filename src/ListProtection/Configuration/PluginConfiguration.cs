@@ -1,45 +1,49 @@
 ﻿using MediaBrowser.Model.Plugins;
-using System.Collections.Generic;
 
-namespace PlaylistProtection
+namespace ListProtection.Configuration
 {
+    /// <summary>
+    /// The plugin's persisted settings. Serialised to XML by Emby's native
+    /// BasePlugin&lt;T&gt; mechanism via Plugin.Instance.Configuration /
+    /// SaveConfiguration(). No custom store, no hand-rolled JSON round-trip.
+    ///
+    /// This class has no UI members — it is never assigned as ContentData.
+    /// ConfigUI is the separate view-model rendered by GenericEdit; it reads
+    /// from and writes back to this class via ConfigPageView.
+    /// </summary>
     public class PluginConfiguration : BasePluginConfiguration
     {
-        public int ConfidenceThreshold { get; set; } = 70;
-        public bool EnableAutoRepair { get; set; } = true;
+        /// <summary>
+        /// Master switch. When false, no automatic repairs fire regardless of
+        /// other settings. Defaults to false — enable only once scoring results
+        /// have been validated in your library.
+        /// </summary>
+        public bool AutoRepairEnabled { get; set; } = false;
 
         /// <summary>
-        /// Global multiplier applied to all rule scores.
-        /// Used to scale overall confidence sensitivity.
+        /// Minimum candidate score required for an automatic repair.
+        ///   100 = FilenameStemExact alone qualifies (strong signal)
+        ///   160 = FilenameStemExact + NameExact (very high confidence)
+        ///    20 = ParentFolderMatch only (album sibling — not recommended)
+        /// Default: 100.
         /// </summary>
-        public double GlobalWeightMultiplier { get; set; } = 1.0;
+        public int AutoRepairThreshold { get; set; } = 100;
 
         /// <summary>
-        /// Minimum confidence threshold required for a candidate to be considered valid.
-        /// Candidates below this score should be ignored for repair selection.
+        /// Safety cap on the number of members auto-repaired in a single
+        /// discovery run. Prevents a single large folder rename from
+        /// generating unbounded write load during an active library scan.
+        /// Repairs deferred by this cap are picked up in the next cycle.
+        /// Set to 0 for no limit. Default: 10.
         /// </summary>
-        public int MinimumConfidenceThreshold { get; set; } = 50;
+        public int AutoRepairMaxPerRun { get; set; } = 10;
 
         /// <summary>
-        /// Enables verbose rule scoring output for debugging and diagnostics.
+        /// When true, candidate discovery runs automatically after detection
+        /// events (file rename, ItemRemoved). When false, discovery only runs
+        /// on the scheduled daily sweep or a manual dashboard task trigger.
+        /// Default: true.
         /// </summary>
-        public bool EnableDebugScoring { get; set; } = false;
-
-        /// <summary>
-        /// Optional per-rule weighting overrides.
-        /// Key = rule name, Value = weight multiplier.
-        /// </summary>
-        public Dictionary<string, double> RuleWeights { get; set; } = new Dictionary<string, double>();
-
-        /// <summary>
-        /// Maximum number of candidates to evaluate per MissingItem.
-        /// Prevents excessive library scanning cost.
-        /// </summary>
-        public int MaxCandidatesPerMissingItem { get; set; } = 50;
-
-        /// <summary>
-        /// When enabled, engine will log full per-rule breakdown per candidate.
-        /// </summary>
-        public bool LogRuleBreakdown { get; set; } = false;
+        public bool AutoDiscoverCandidates { get; set; } = true;
     }
 }

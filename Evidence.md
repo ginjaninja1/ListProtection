@@ -174,3 +174,19 @@ No insert-at-position API exists
 
 RefreshCompleted scope
 Fires per item refreshed (each subfolder, then parent). For the folder rename case the parent folder's RefreshCompleted is the signal that all new tracks are committed. Pending candidate discovery is keyed by removed folder path and drained when a matching RefreshCompleted fires.
+
+Here are the learnings worth keeping:
+Command routing
+RunCommand on PluginViewBase is the sole Emby framework entry point for all UI commands including AutoPostBack. Override RunCommand directly. OnSaveCommand is a plugin-project convention — the framework never calls it. If you see OnSaveCommand in example code, check whether that project's own base class wires RunCommand → OnSaveCommand before copying the pattern.
+AutoPostBack
+Decorate ConfigUI fields with [AutoPostBack("commandId", nameof(FieldName))]. Set ShowSave = false on the page view. Every field change fires RunCommand with the specified commandId. No save button needed.
+Configuration persistence — two-class pattern
+
+PluginConfiguration : BasePluginConfiguration — lean POCO, no UI inheritance, no CaptionItem fields. Serialised to XML by BasePlugin<T> natively via Plugin.Instance.Configuration / SaveConfiguration(). Never assigned as ContentData.
+ConfigUI : EditableOptionsBase — view model only, rendered by GenericEdit. CaptionItem, display attributes, [AutoPostBack] all live here. Never persisted. ConfigPageView maps between the two on every RunCommand.
+
+If ConfigUI inherits EditableOptionsBase and is passed directly to a store or SaveConfiguration(), all the presentation metadata (EditorTitle, EditorDescription, CaptionItem fields, FeatureRequiresPremiere, IsNewItem) pollutes the serialised output.
+BasePlugin<T> constructor
+Takes (IApplicationPaths, IXmlSerializer) — not (IServerApplicationHost, ILogManager). Emby's IoC resolves all constructor parameters; add any other services you need alongside those two.
+PluginViewBase.RunCommand default
+Returns Task.FromResult<IPluginUIView>(null). Returning null closes a dialog. For a page view, return Task.FromResult((IPluginUIView)this) to stay on the page after handling a command.

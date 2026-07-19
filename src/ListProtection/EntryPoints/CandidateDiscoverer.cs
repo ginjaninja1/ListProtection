@@ -27,6 +27,10 @@ namespace ListProtection.EntryPoints
     /// A candidate must score > 0 to be recorded.
     /// Candidates are stored sorted by Score descending, highest first.
     /// Deduplication: same (MissingMember.InternalId, PlaylistId, CandidateInternalId) triple is not re-recorded.
+    ///
+    /// Event payload format (CandidateFound):
+    ///   "[POS X] Track Name | score=160 | /path/to/candidate.flac"
+    ///   X = 1-based position of the missing member in the playlist's ground truth.
     /// </summary>
     internal static class CandidateDiscoverer
     {
@@ -113,7 +117,8 @@ namespace ListProtection.EntryPoints
                     plugin.CandidateStore.Save(existing);
                     logger.Info("[CandidateDiscoverer] Discovery complete — store updated");
 
-                    // Write CandidateFound events — one per affected playlist
+                    // Write CandidateFound events — one per affected playlist.
+                    // Payload lines include [POS X] prefix using the missing member's GT position.
                     try
                     {
                         var byPlaylist = new Dictionary<string, List<CandidateEntry>>(StringComparer.OrdinalIgnoreCase);
@@ -126,10 +131,16 @@ namespace ListProtection.EntryPoints
 
                         foreach (var kvp in byPlaylist)
                         {
+                            gtStore.TryGetValue(kvp.Key, out var gtEntry);
+
                             var payloadLines = new List<string>();
                             foreach (var c in kvp.Value)
                             {
+                                var internalId = c.MissingMember?.InternalId ?? -1;
+                                var pos = GetGroundTruthPosition(internalId, gtEntry);
+                                var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
                                 payloadLines.Add(
+                                    posPrefix +
                                     (c.CandidateName ?? "(unnamed)") +
                                     " | score=" + c.Score +
                                     " | " + (c.CandidatePath ?? string.Empty));
@@ -189,10 +200,10 @@ namespace ListProtection.EntryPoints
             }
 
             // Pre-compute GT-derived comparison values once per missing member
-            var gtStem = GetFilenameStem(member.Path);         // e.g. "02. New Heights"
-            var gtStemNorm = NormalizeStem(gtStem);                // e.g. "new heights"
-            var gtNameNorm = NormalizeName(member.Name);           // e.g. "new heights"
-            var gtParentDir = GetParentFolderName(member.Path);     // e.g. "Bomb in a Birdcage"
+            var gtStem = GetFilenameStem(member.Path);
+            var gtStemNorm = NormalizeStem(gtStem);
+            var gtNameNorm = NormalizeName(member.Name);
+            var gtParentDir = GetParentFolderName(member.Path);
 
             logger.Info(
                 "[CandidateDiscoverer]   GT stem='{0}' | stemNorm='{1}' | nameNorm='{2}' | parentDir='{3}'",
@@ -206,8 +217,7 @@ namespace ListProtection.EntryPoints
                 if (excludedIds.Contains(item.InternalId))
                     continue;
 
-                // Never suggest the missing item itself (shouldn't appear since it's absent,
-                // but guard against stale InternalId reuse)
+                // Never suggest the missing item itself
                 if (item.InternalId == member.InternalId)
                     continue;
 
@@ -314,79 +324,53 @@ namespace ListProtection.EntryPoints
 
         // ── Scoring helpers ────────────────────────────────────────────────
 
-        /// <summary>
-        /// Extracts FileNameWithoutExtension from a full path.
-        /// e.g. "D:\Music\Album\02. New Heights.flac" → "02. New Heights"
-        /// Returns empty string on null/empty input — never throws.
-        /// </summary>
         private static string GetFilenameStem(string fullPath)
         {
-            if (string.IsNullOrEmpty(fullPath))
-                return string.Empty;
-
-            try
-            {
-                return Path.GetFileNameWithoutExtension(fullPath) ?? string.Empty;
-            }
-            catch
-            {
-                return string.Empty;
-            }
+            if (string.IsNullOrEmpty(fullPath)) return string.Empty;
+            try { return Path.GetFileNameWithoutExtension(fullPath) ?? string.Empty; }
+            catch { return string.Empty; }
         }
 
-        /// <summary>
-        /// Strips leading track-number prefix and lowercases.
-        /// "02. New Heights" → "new heights"
-        /// "03 - Whisper"    → "whisper"
-        /// </summary>
         private static string NormalizeStem(string stem)
         {
-            if (string.IsNullOrEmpty(stem))
-                return string.Empty;
-
+            if (string.IsNullOrEmpty(stem)) return string.Empty;
             var stripped = TrackPrefixRegex.Replace(stem.Trim(), string.Empty);
             return stripped.ToLowerInvariant();
         }
 
-        /// <summary>
-        /// Lowercases and collapses whitespace for loose name comparison.
-        /// </summary>
         private static string NormalizeName(string name)
         {
-            if (string.IsNullOrEmpty(name))
-                return string.Empty;
-
+            if (string.IsNullOrEmpty(name)) return string.Empty;
             return Regex.Replace(name.Trim().ToLowerInvariant(), @"\s+", " ");
         }
 
-        /// <summary>
-        /// Returns the immediate parent folder name from a full file path.
-        /// "D:\Music\[2009] Bomb in a Birdcage\02. New Heights.flac" → "Bomb in a Birdcage"
-        /// Strips leading year prefix "[YYYY] " if present.
-        /// Returns empty string on null/empty input or if no parent — never throws.
-        /// </summary>
         private static string GetParentFolderName(string fullPath)
         {
-            if (string.IsNullOrEmpty(fullPath))
-                return string.Empty;
-
+            if (string.IsNullOrEmpty(fullPath)) return string.Empty;
             try
             {
                 var dir = Path.GetDirectoryName(fullPath);
-                if (string.IsNullOrEmpty(dir))
-                    return string.Empty;
-
+                if (string.IsNullOrEmpty(dir)) return string.Empty;
                 var folderName = Path.GetFileName(dir) ?? string.Empty;
-
-                // Strip leading "[YYYY] " or "(YYYY) " album-year prefix
                 folderName = Regex.Replace(folderName, @"^[\[\(]\d{4}[\]\)]\s*", string.Empty).Trim();
-
                 return folderName;
             }
-            catch
-            {
-                return string.Empty;
-            }
+            catch { return string.Empty; }
+        }
+
+        // ── Position helper ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the 0-based index of the member in the GT Members list,
+        /// or -1 if not found or gtEntry is null.
+        /// </summary>
+        private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
+        {
+            if (gtEntry?.Members == null || internalId <= 0) return -1;
+            for (var i = 0; i < gtEntry.Members.Count; i++)
+                if (gtEntry.Members[i].InternalId == internalId)
+                    return i;
+            return -1;
         }
     }
 }

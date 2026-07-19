@@ -447,7 +447,11 @@ namespace ListProtection.Services
                     var candidateName = candidate?.CandidateName ?? "(unknown)";
                     var candidatePath = candidate?.CandidatePath ?? string.Empty;
 
-                    payloadLines.Add(missingName + " → " + candidateName + " | " + candidatePath);
+                    // Prefix with [POS X] using the member's 1-based position in GT
+                    var pos = GetGroundTruthPosition(missingId, oldGtEntry);
+                    var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
+
+                    payloadLines.Add(posPrefix + missingName + " → " + candidateName + " | " + candidatePath);
                 }
 
                 // Remove repaired missing records
@@ -521,6 +525,21 @@ namespace ListProtection.Services
             }
 
             _logger.Info("[PlaylistRepairService] ExecuteRepairs complete");
+        }
+
+        // ── Helpers ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the 0-based index of the member in the GT Members list,
+        /// or -1 if not found or gtEntry is null.
+        /// </summary>
+        private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
+        {
+            if (gtEntry?.Members == null || internalId <= 0) return -1;
+            for (var i = 0; i < gtEntry.Members.Count; i++)
+                if (gtEntry.Members[i].InternalId == internalId)
+                    return i;
+            return -1;
         }
     }
 }

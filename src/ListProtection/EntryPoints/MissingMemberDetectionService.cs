@@ -1,5 +1,7 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Services;
+using ListProtection.Storage;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Events;
@@ -30,7 +32,8 @@ namespace ListProtection.EntryPoints
     ///   3. RefreshCompleted (Type=Folder)
     ///      Fires after Emby has committed new items to the DB following a
     ///      folder rename. By this point the replacement tracks are discoverable.
-    ///      We trigger CandidateDiscoverer for playlists affected by the rename.
+    ///      We trigger CandidateDiscoverer (and optionally AutoRepairer) for
+    ///      playlists affected by the rename.
     ///      The affected set is tracked in _pendingCandidateDiscovery, keyed by
     ///      the removed folder path, populated in path 2 above.
     ///      Proven: folder rename probe 2026-07-18.
@@ -39,11 +42,18 @@ namespace ListProtection.EntryPoints
     ///   PostScanDetectionTask  — runs detection after every library scan + daily 03:00
     ///   PostScanCandidateTask  — runs discovery after every library scan + daily 04:00
     ///   DetectMissingMembersTask / CandidateDiscoveryTask — manual dashboard runs
+    ///
+    /// Auto-repair:
+    ///   After candidate discovery, if AutoRepairEnabled is true in ConfigStore,
+    ///   AutoRepairer.RunAutoRepair is called for the affected playlists.
+    ///   AutoDiscoverCandidates in config controls whether discovery is queued at all.
     /// </summary>
     public class MissingMemberDetectionService : IServerEntryPoint
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IProviderManager _providerManager;
+        private readonly IPlaylistManager _playlistManager;
+        private readonly IUserManager _userManager;
         private readonly ILogger _logger;
 
         /// <summary>
@@ -57,10 +67,14 @@ namespace ListProtection.EntryPoints
         public MissingMemberDetectionService(
             ILibraryManager libraryManager,
             IProviderManager providerManager,
+            IPlaylistManager playlistManager,
+            IUserManager userManager,
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _providerManager = providerManager;
+            _playlistManager = playlistManager;
+            _userManager = userManager;
             _logger = logManager.GetLogger(nameof(MissingMemberDetectionService));
         }
 
@@ -127,8 +141,10 @@ namespace ListProtection.EntryPoints
                     playlistId);
                 MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
 
-                // Queue candidate discovery — new file may be in DB already (file rename)
-                QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
+                // Queue candidate discovery — new file may be in DB already (file rename).
+                // Conditional on AutoDiscoverCandidates config flag.
+                if (IsAutoDiscoverEnabled())
+                    QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
             }
         }
 
@@ -180,7 +196,8 @@ namespace ListProtection.EntryPoints
 
                 // Queue for candidate discovery — new tracks won't be in DB until
                 // RefreshCompleted fires for the parent folder.
-                QueueCandidateDiscovery(normalised, playlistId);
+                if (IsAutoDiscoverEnabled())
+                    QueueCandidateDiscovery(normalised, playlistId);
             }
         }
 
@@ -203,6 +220,7 @@ namespace ListProtection.EntryPoints
         /// For folder renames, the replacement tracks are now discoverable.
         /// Drain _pendingCandidateDiscovery entries whose folder path is an
         /// ancestor of (or equal to) the refreshed item's path.
+        /// After discovery, attempt auto-repair for qualifying candidates.
         /// </summary>
         private void OnRefreshCompleted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
@@ -227,8 +245,6 @@ namespace ListProtection.EntryPoints
 
                     foreach (var kvp in _pendingCandidateDiscovery)
                     {
-                        // Match: pending folder key is under (or equal to) the refreshed folder,
-                        // or is the special __audio__ prefix (file rename — discover immediately)
                         var key = kvp.Key;
                         var isAudioKey = key.StartsWith("__audio__", StringComparison.Ordinal);
                         var isAncestor = !isAudioKey && (
@@ -264,11 +280,48 @@ namespace ListProtection.EntryPoints
                         "[MissingMemberDetectionService] Running candidate discovery for playlist {0}",
                         playlistId);
                     CandidateDiscoverer.RunDiscovery(playlistId, _libraryManager, _logger);
+
+                    // ── Auto-repair ────────────────────────────────────────
+                    // Fire-and-forget: auto-repair is async but we are in a sync event handler.
+                    // Failures are caught and logged inside AutoRepairer.RunAutoRepair.
+                    _logger.Info(
+                        "[MissingMemberDetectionService] Attempting auto-repair for playlist {0}",
+                        playlistId);
+
+                    AutoRepairer.RunAutoRepair(
+                        playlistId,
+                        _libraryManager,
+                        _playlistManager,
+                        _userManager,
+                        _logger)
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                                _logger.ErrorException(
+                                    "[MissingMemberDetectionService] AutoRepairer.RunAutoRepair faulted for playlist {0}",
+                                    t.Exception,
+                                    playlistId);
+                        });
                 }
             }
             catch (Exception ex)
             {
                 _logger.ErrorException("[MissingMemberDetectionService] OnRefreshCompleted failed", ex);
+            }
+        }
+
+        // ── Config helpers ─────────────────────────────────────────────────
+
+        private bool IsAutoDiscoverEnabled()
+        {
+            try
+            {
+                var config = ListProtectionPlugin.Instance?.Configuration;
+                return config == null || config.AutoDiscoverCandidates; // default true
+            }
+            catch
+            {
+                return true;
             }
         }
 

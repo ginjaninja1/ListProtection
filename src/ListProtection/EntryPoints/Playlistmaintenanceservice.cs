@@ -137,10 +137,10 @@ namespace ListProtection.EntryPoints
                 {
                     var entries = plugin.GroundTruthStore.Load();
 
-                    if (!entries.TryGetValue(playlistIdN, out var entry) || !entry.IsActive)
+                    if (!entries.TryGetValue(playlistIdN, out var entry))
                     {
                         _logger.Warn(
-                            "[PlaylistMaintenanceService] No active ground truth entry for playlist {0} — skipping add",
+                            "[PlaylistMaintenanceService] No ground truth entry for playlist {0} — skipping add",
                             playlistIdN);
                         return;
                     }
@@ -251,10 +251,10 @@ namespace ListProtection.EntryPoints
                 {
                     var entries = plugin.GroundTruthStore.Load();
 
-                    if (!entries.TryGetValue(playlistIdN, out var entry) || !entry.IsActive)
+                    if (!entries.TryGetValue(playlistIdN, out var entry))
                     {
                         _logger.Warn(
-                            "[PlaylistMaintenanceService] No active ground truth entry for playlist {0} — skipping remove",
+                            "[PlaylistMaintenanceService] No ground truth entry for playlist {0} — skipping remove",
                             playlistIdN);
                         return;
                     }

@@ -230,10 +230,10 @@ namespace ListProtection.UI.MissingMembers
 
             foreach (var playlistId in protectedIds)
             {
-                if (!groundTruth.TryGetValue(playlistId, out var entry) || !entry.IsActive)
+                if (!groundTruth.TryGetValue(playlistId, out var entry))
                 {
                     _logger.Warn(
-                        "[MissingMembersPageView] BuildRows — protected playlist {0} has no active ground truth entry, skipping",
+                        "[MissingMembersPageView] BuildRows — protected playlist {0} has no ground truth entry, skipping",
                         playlistId);
                     continue;
                 }

@@ -30,8 +30,6 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ILogger _logger;
         private readonly PlaylistRepairService _repairService;
 
-
-
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
             PlaylistManagementStore store,
@@ -88,7 +86,6 @@ namespace ListProtection.UI.PlaylistManagement
 
                 if (openHistoryRow != null)
                 {
-                    // Only meaningful for protected playlists
                     var protectedIds = _store.Load();
                     if (!protectedIds.Contains(openHistoryRow.Id))
                     {
@@ -117,7 +114,6 @@ namespace ListProtection.UI.PlaylistManagement
 
                 if (openGtRow != null)
                 {
-                    // Only meaningful for protected playlists
                     var protectedIds = _store.Load();
                     if (!protectedIds.Contains(openGtRow.Id))
                     {
@@ -196,8 +192,6 @@ namespace ListProtection.UI.PlaylistManagement
                 }
 
                 // ── Action: Toggle Protection ──────────────────────────────
-                // Determine which playlists are being protected vs. unprotected
-                // compared to the current store state.
                 var currentProtectedIds = _store.Load();
                 var incomingProtectedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var row in ui.PlaylistRows)
@@ -206,12 +200,10 @@ namespace ListProtection.UI.PlaylistManagement
                         incomingProtectedIds.Add(row.Id);
                 }
 
-                // Detect newly unprotected playlists
                 var beingUnprotected = currentProtectedIds
                     .Where(id => !incomingProtectedIds.Contains(id))
                     .ToArray();
 
-                // Detect newly protected playlists
                 var beingProtected = incomingProtectedIds
                     .Where(id => !currentProtectedIds.Contains(id))
                     .ToArray();
@@ -229,7 +221,6 @@ namespace ListProtection.UI.PlaylistManagement
                         "[PlaylistManagementPageView] Unprotect requested for '{0}' — launching confirm dialog",
                         unprotectName);
 
-                    // Capture locals for lambdas
                     var capturedId = unprotectId;
                     var capturedName = unprotectName;
 
@@ -244,7 +235,20 @@ namespace ListProtection.UI.PlaylistManagement
                             currentIds.Remove(capturedId);
                             WriteEvent("Unprotect", capturedId, capturedName, string.Empty);
                             _store.Save(currentIds);
+
+                            // Hard-delete the GT entry — user confirmed intent via name dialog.
+                            // No soft-delete: re-protecting always captures fresh ground truth.
+                            var entries = _groundTruthStore.Load();
+                            if (entries.Remove(capturedId))
+                            {
+                                _groundTruthStore.Save(entries);
+                                _logger.Info(
+                                    "[PlaylistManagementPageView] Hard-deleted GT entry for '{0}' ({1})",
+                                    capturedName, capturedId);
+                            }
+
                             ReconcileGroundTruth(currentIds);
+
                             _logger.Info(
                                 "[PlaylistManagementPageView] Unprotect executed for '{0}'",
                                 capturedName);
@@ -257,17 +261,16 @@ namespace ListProtection.UI.PlaylistManagement
                         _logger);
                 }
 
-                // Save new protected set and handle protect events
-                _logger.Info(
-                    "[PlaylistManagementPageView] Saving {0} protected playlist(s)",
-                    incomingProtectedIds.Count);
-
                 // Write Protect events for newly protected playlists
                 foreach (var newId in beingProtected)
                 {
                     var nameForEvent = ui.PlaylistRows.FirstOrDefault(r => r.Id == newId)?.Name ?? "(unnamed)";
                     WriteEvent("Protect", newId, nameForEvent, string.Empty);
                 }
+
+                _logger.Info(
+                    "[PlaylistManagementPageView] Saving {0} protected playlist(s)",
+                    incomingProtectedIds.Count);
 
                 _store.Save(incomingProtectedIds);
                 ReconcileGroundTruth(incomingProtectedIds);
@@ -293,9 +296,6 @@ namespace ListProtection.UI.PlaylistManagement
                 ContentData = BuildOptions();
                 RaiseUIViewInfoChanged();
             }
-            // UnprotectConfirmDialogView is handled inline — on name match it executes
-            // the unprotect and returns the parent page view directly from RunCommand,
-            // so OnDialogResult is never reached for that dialog.
 
             base.OnDialogResult(dialogView, completedOk, data);
         }
@@ -416,12 +416,11 @@ namespace ListProtection.UI.PlaylistManagement
                 var isLive = liveIds.Contains(protectedId);
                 var gtEntry = groundTruth.TryGetValue(protectedId, out var gt) ? gt : null;
                 _logger.Info(
-                    "[PlaylistManagementPageView] Protected playlist | GuidN={0} | Name={1} | LiveInEmby={2} | GroundTruthExists={3} | GroundTruthActive={4} | MemberCount={5}",
+                    "[PlaylistManagementPageView] Protected playlist | GuidN={0} | Name={1} | LiveInEmby={2} | GroundTruthExists={3} | MemberCount={4}",
                     protectedId,
                     gtEntry?.PlaylistName ?? "(no ground truth)",
                     isLive,
                     gtEntry != null,
-                    gtEntry?.IsActive ?? false,
                     gtEntry?.Members?.Count ?? 0);
 
                 if (!isLive)
@@ -435,10 +434,6 @@ namespace ListProtection.UI.PlaylistManagement
                 return Array.Empty<PlaylistRow>();
 
             // Batch live member count for unprotected playlists in a single query.
-            // Unprotected playlists have no GT entry to read from, so we query Emby
-            // live. Rather than one GetItemList per playlist (O(N) queries), we
-            // collect all unprotected InternalIds and query once, then fan out by
-            // InternalId.
             var unprotectedInternalIds = new List<long>();
             foreach (var item in items)
             {
@@ -447,7 +442,6 @@ namespace ListProtection.UI.PlaylistManagement
                     unprotectedInternalIds.Add(item.InternalId);
             }
 
-            // Key: playlist InternalId → live member count
             var liveCountByInternalId = new Dictionary<long, int>();
             if (unprotectedInternalIds.Count > 0)
             {
@@ -459,24 +453,12 @@ namespace ListProtection.UI.PlaylistManagement
 
                 if (allLiveMembers != null)
                 {
-                    // GetItemList with multiple ListIds returns members tagged with
-                    // their ListItemEntryId but not their parent playlist InternalId
-                    // directly — we need to resolve per-playlist counts by querying
-                    // each individually only if the batch returns ambiguous results.
-                    // For now: fall back to per-playlist if more than one unprotected
-                    // playlist exists (safe, batch still reduces N to 1 for the common
-                    // single-unprotected-playlist case).
                     if (unprotectedInternalIds.Count == 1)
                     {
                         liveCountByInternalId[unprotectedInternalIds[0]] = allLiveMembers.Length;
                     }
                     else
                     {
-                        // Multiple unprotected playlists — query each individually.
-                        // This is still better than the previous approach because the
-                        // batch above confirmed the API accepts multi-ListId queries;
-                        // a future optimisation can group results by ListItemEntryId
-                        // ranges once that mapping is proven.
                         foreach (var internalId in unprotectedInternalIds)
                         {
                             var members = _libraryManager.GetItemList(new InternalItemsQuery
@@ -498,21 +480,16 @@ namespace ListProtection.UI.PlaylistManagement
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
 
-                // Status: GT/MM/MC
-                // GT = ground truth member count (protected) or live count (unprotected)
-                // MM = missing member count
-                // MC = count of missing members that have at least one candidate
                 int memberCount;
                 if (isProtected && gtEntry != null)
                 {
-                    // Protected: use captured ground truth count
                     memberCount = gtEntry.Members?.Count ?? 0;
                 }
                 else
                 {
-                    // Unprotected: use pre-fetched live count
                     liveCountByInternalId.TryGetValue(item.InternalId, out memberCount);
                 }
+
                 var playlistMissing = missingRecords
                     .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
                     .ToList();
@@ -529,7 +506,6 @@ namespace ListProtection.UI.PlaylistManagement
                 }
                 var status = memberCount + "/" + missingCount + "/" + candidateCoveredCount;
 
-                // Single-row detail for the child grid (troubleshooting metadata)
                 var detailRows = new[]
                 {
                     new PlaylistDetailRow
@@ -562,35 +538,22 @@ namespace ListProtection.UI.PlaylistManagement
 
         // ── Ground Truth ───────────────────────────────────────────────────
 
+        /// <summary>
+        /// For each protected playlist with no existing GT entry, captures members fresh.
+        /// Existing entries are left untouched — they are always current (maintained by
+        /// PlaylistMaintenanceService) or freshly written here on first protect.
+        /// Soft-delete/restore is gone — unprotect hard-deletes the entry.
+        /// </summary>
         private void ReconcileGroundTruth(HashSet<string> protectedIds)
         {
             try
             {
                 var entries = _groundTruthStore.Load();
 
-                foreach (var key in new List<string>(entries.Keys))
-                {
-                    if (!protectedIds.Contains(key) && entries[key].IsActive)
-                    {
-                        entries[key].IsActive = false;
-                        _logger.Info("[GroundTruthStore] Soft-deleted entry for playlist {0}", key);
-                    }
-                }
-
                 foreach (var playlistId in protectedIds)
                 {
-                    if (entries.TryGetValue(playlistId, out var existing))
-                    {
-                        if (!existing.IsActive)
-                        {
-                            existing.IsActive = true;
-                            _logger.Info(
-                                "[GroundTruthStore] Restored soft-deleted entry for playlist {0} (captured {1})",
-                                playlistId,
-                                existing.CapturedAt);
-                        }
-                        continue;
-                    }
+                    if (entries.ContainsKey(playlistId))
+                        continue; // Already captured — PlaylistMaintenanceService keeps it current
 
                     var capture = CaptureMembers(playlistId);
                     if (capture == null) continue;
@@ -599,15 +562,12 @@ namespace ListProtection.UI.PlaylistManagement
                     {
                         PlaylistName = capture.PlaylistName,
                         CapturedAt = DateTime.UtcNow,
-                        IsActive = true,
                         Members = capture.Members
                     };
 
                     _logger.Info(
                         "[GroundTruthStore] Captured {0} member(s) for playlist {1} ({2})",
-                        capture.Members.Count,
-                        playlistId,
-                        capture.PlaylistName);
+                        capture.Members.Count, playlistId, capture.PlaylistName);
                 }
 
                 _groundTruthStore.Save(entries);
@@ -650,11 +610,17 @@ namespace ListProtection.UI.PlaylistManagement
                     "[GroundTruthStore] CaptureMembers — found playlist '{0}' | InternalId={1} | Path={2}",
                     playlist.Name ?? "(unnamed)", playlist.InternalId, playlist.Path ?? "(no path)");
 
-                var members = _libraryManager.GetItemList(new InternalItemsQuery
+                // PROVEN: Playlist.GetItemList returns members in correct playlist order (ListItemOrder).
+                // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
+                // Proven by CaptureOrderProbeTask 2026-07-18.
+                var playlistEntity = playlist as MediaBrowser.Controller.Playlists.Playlist;
+                if (playlistEntity == null)
                 {
-                    ListIds = new[] { playlist.InternalId },
-                    Recursive = true
-                });
+                    _logger.Warn("[GroundTruthStore] CaptureMembers — could not cast to Playlist: {0}", playlistIdN);
+                    return null;
+                }
+
+                var members = playlistEntity.GetItemList(new InternalItemsQuery());
 
                 _logger.Info(
                     "[GroundTruthStore] CaptureMembers — captured {0} member(s) for '{1}'",

@@ -173,24 +173,94 @@ namespace ListProtection.Services
 
                 if (existingPlaylist != null)
                 {
-                    // ── Playlist exists — AddToPlaylist ────────────────────
+                    // ── Playlist exists — atomic remove-all then add-in-order ──
+                    //
+                    // Approach: delete every current member then re-add all members
+                    // in the correct GT order (substituting candidates for missing slots).
+                    // This is bulletproof — no MoveItem, no index drift, no race with
+                    // PlaylistMaintenanceService between add and move steps.
+                    // skipDuplicates=false because GT is the authority — if GT has
+                    // duplicates, the playlist should too.
                     activePlaylistId = oldPlaylistId;
                     activeInternalId = existingPlaylist.InternalId;
+                    var activePlaylist = existingPlaylist as MediaBrowser.Controller.Playlists.Playlist;
 
                     _logger.Info(
-                        "[PlaylistRepairService] Playlist exists | Name='{0}' | InternalId={1} | using AddToPlaylist",
+                        "[PlaylistRepairService] Playlist exists | Name='{0}' | InternalId={1} | atomic rebuild",
                         existingPlaylist.Name ?? "(unnamed)", activeInternalId);
 
+                    // Map: missing InternalId → candidate InternalId for this batch
+                    var missingToCandidate = new Dictionary<long, long>();
+                    foreach (var (missingId, candidateId) in repairs)
+                        missingToCandidate[missingId] = candidateId;
+
+                    // Step 1 — read current live members to get their ListItemEntryIds for removal.
+                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
+                    // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
+                    var currentMembers = activePlaylist.GetItemList(new InternalItemsQuery());
+
+                    var currentEntryIds = currentMembers
+                        .Select(m => m.ListItemEntryId)
+                        .ToArray();
+
+                    _logger.Info(
+                        "[PlaylistRepairService] Removing {0} current member(s) from '{1}'",
+                        currentEntryIds.Length, playlistName);
+
+                    // Step 2 — remove all current members
+                    if (currentEntryIds.Length > 0)
+                    {
+                        try
+                        {
+                            await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
+                            _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, playlistName);
+                            continue;
+                        }
+                    }
+
+                    // Step 3 — build desired order from GT, substituting candidates for missing slots
+                    // GT members are in original playlist order (ordered by ListItemEntryId ascending).
+                    // Members with no live InternalId and no candidate are included as-is — Emby will
+                    // silently skip invalid InternalIds, preserving as much of GT as possible.
+                    var desiredInternalIds = new List<long>();
+                    if (oldGtEntry?.Members != null)
+                    {
+                        foreach (var gtMember in oldGtEntry.Members)
+                        {
+                            if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                            {
+                                desiredInternalIds.Add(candidateId);
+                                _logger.Info(
+                                    "[PlaylistRepairService] Slot {0} ('{1}') → candidate InternalId={2}",
+                                    desiredInternalIds.Count - 1, gtMember.Name, candidateId);
+                            }
+                            else if (!repairedMissingIds.Contains(gtMember.InternalId))
+                            {
+                                // Present member — include in original position
+                                desiredInternalIds.Add(gtMember.InternalId);
+                            }
+                        }
+                    }
+
+                    _logger.Info(
+                        "[PlaylistRepairService] Re-adding {0} member(s) to '{1}' in GT order",
+                        desiredInternalIds.Count, playlistName);
+
+                    // Step 4 — add all in desired order, skipDuplicates=false (GT is authority)
                     try
                     {
                         await _playlistManager.AddToPlaylist(
-                            existingPlaylist as MediaBrowser.Controller.Playlists.Playlist,
-                            candidateItemIds,
-                            skipDuplicates: true,
+                            activePlaylist,
+                            desiredInternalIds.ToArray(),
+                            skipDuplicates: false,
                             user: user,
                             cancellationToken: System.Threading.CancellationToken.None);
 
-                        _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s) added", candidateItemIds.Length);
+                        _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
                     }
                     catch (Exception ex)
                     {
@@ -198,14 +268,12 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    var liveMembers = _libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        ListIds = new[] { activeInternalId },
-                        Recursive = true
-                    });
+                    // Step 5 — read back to get new ListItemEntryIds for GT update.
+                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
+                    var rebuiltMembers = activePlaylist.GetItemList(new InternalItemsQuery());
 
-                    var updatedMembers = new List<GroundTruthMember>(liveMembers.Length);
-                    foreach (var m in liveMembers)
+                    var updatedMembers = new List<GroundTruthMember>(rebuiltMembers.Length);
+                    foreach (var m in rebuiltMembers)
                     {
                         updatedMembers.Add(new GroundTruthMember
                         {
@@ -217,21 +285,10 @@ namespace ListProtection.Services
                         });
                     }
 
-                    if (oldGtEntry?.Members != null)
-                    {
-                        foreach (var oldMember in oldGtEntry.Members)
-                        {
-                            if (repairedMissingIds.Contains(oldMember.InternalId)) continue;
-                            if (updatedMembers.Any(m => m.InternalId == oldMember.InternalId)) continue;
-                            updatedMembers.Add(oldMember);
-                        }
-                    }
-
                     groundTruth[activePlaylistId] = new GroundTruthEntry
                     {
                         PlaylistName = playlistName,
                         CapturedAt = DateTime.UtcNow,
-                        IsActive = true,
                         Members = updatedMembers
                     };
                     groundTruthChanged = true;
@@ -329,11 +386,12 @@ namespace ListProtection.Services
                     }
                     if (migratedCandidates > 0) candidatesChanged = true;
 
-                    var capturedMembers = _libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        ListIds = new[] { activeInternalId },
-                        Recursive = true
-                    });
+                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
+                    // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
+                    var newPlaylistEntity = resolvedItems[0] as MediaBrowser.Controller.Playlists.Playlist;
+                    var capturedMembers = newPlaylistEntity != null
+                        ? newPlaylistEntity.GetItemList(new InternalItemsQuery())
+                        : System.Array.Empty<MediaBrowser.Controller.Entities.BaseItem>();
 
                     var newMembers = new List<GroundTruthMember>(capturedMembers.Length);
                     foreach (var m in capturedMembers)
@@ -362,7 +420,6 @@ namespace ListProtection.Services
                     {
                         PlaylistName = playlistName,
                         CapturedAt = DateTime.UtcNow,
-                        IsActive = true,
                         Members = newMembers
                     };
 

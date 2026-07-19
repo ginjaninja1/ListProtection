@@ -12,7 +12,7 @@ namespace ListProtection.Storage
     /// <summary>
     /// Pattern B plain store — owns serialisation, locking, and file path.
     /// Stores ground truth membership snapshots keyed by playlist Guid "N" string.
-    /// Entries are soft-deleted (IsActive = false) when a playlist is unprotected.
+    /// Entries are hard-deleted when a playlist is unprotected (confirmed via dialog).
     /// </summary>
     public class GroundTruthStore
     {

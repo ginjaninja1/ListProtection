@@ -1,32 +1,28 @@
 ﻿using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
+using MediaBrowser.Model.Querying;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
 
 namespace ListProtection.EntryPoints
 {
     /// <summary>
-    /// Shared detection logic called by both the timer path
-    /// (MissingMemberDetectionService) and the scheduled task
-    /// (DetectMissingMembersTask).
+    /// Shared detection logic called by MissingMemberDetectionService (fast path)
+    /// and PostScanDetectionTask (post-scan / scheduled).
     ///
-    /// Static to avoid any temptation to hold state here — all state
-    /// lives in the stores accessed via ListProtectionPlugin.Instance.
+    /// Static — all state lives in stores accessed via ListProtectionPlugin.Instance.
+    ///
+    /// PROVEN: Playlist.GetItemList(new InternalItemsQuery()) returns members in
+    /// correct playlist order (ListItemOrder ascending). Do NOT use
+    /// ILibraryManager.GetItemList with ListIds — that returns in ListItemEntryId
+    /// ascending order which reflects DB insertion order, not playlist position.
+    /// Proven by CaptureOrderProbeTask 2026-07-18.
     /// </summary>
     internal static class MissingMemberDetector
     {
-        /// <summary>
-        /// Compares ground truth against live playlist membership.
-        /// Any ground truth member absent from the live playlist is recorded as missing.
-        /// Deduplicates against existing MissingMembersStore records.
-        ///
-        /// If targetPlaylistIdN is null, runs for all active ground truth entries.
-        /// If targetPlaylistIdN is provided, runs only for that playlist (fast path).
-        /// </summary>
         internal static void RunDetection(
             string targetPlaylistIdN,
             ILibraryManager libraryManager,
@@ -41,7 +37,7 @@ namespace ListProtection.EntryPoints
                 var plugin = ListProtectionPlugin.Instance;
                 if (plugin == null)
                 {
-                    logger.Error("[MissingMemberDetector] Plugin instance is null — aborting detection");
+                    logger.Error("[MissingMemberDetector] Plugin instance is null — aborting");
                     return;
                 }
 
@@ -60,11 +56,15 @@ namespace ListProtection.EntryPoints
 
                 var changed = false;
 
+                // Resolve all playlists once
+                var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Playlist" },
+                    Recursive = true
+                });
+
                 foreach (var kvp in groundTruth)
                 {
-                    if (!kvp.Value.IsActive)
-                        continue;
-
                     if (targetPlaylistIdN != null && kvp.Key != targetPlaylistIdN)
                         continue;
 
@@ -77,19 +77,12 @@ namespace ListProtection.EntryPoints
                         continue;
                     }
 
-                    // Resolve playlist BaseItem to get InternalId
-                    var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        IncludeItemTypes = new[] { "Playlist" },
-                        Recursive = true
-                    });
-
-                    BaseItem playlist = null;
+                    Playlist playlist = null;
                     foreach (var p in allPlaylists)
                     {
                         if (p.Id == guid)
                         {
-                            playlist = p;
+                            playlist = p as Playlist;
                             break;
                         }
                     }
@@ -102,27 +95,19 @@ namespace ListProtection.EntryPoints
                         continue;
                     }
 
-                    // Get live members via ListIds pattern (PROVEN)
-                    var liveMembers = libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        ListIds = new[] { playlist.InternalId },
-                        Recursive = true
-                    });
+                    // PROVEN: Playlist.GetItemList returns members in playlist order.
+                    // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
+                    var liveMembers = playlist.GetItemList(new InternalItemsQuery());
 
                     logger.Info(
                         "[MissingMemberDetector] Live readback for '{0}' ({1}) — {2} live member(s)",
-                        entry.PlaylistName,
-                        playlistIdN,
-                        liveMembers?.Length ?? 0);
+                        entry.PlaylistName, playlistIdN, liveMembers?.Length ?? 0);
 
                     var liveIds = new HashSet<long>();
                     if (liveMembers != null)
-                    {
                         foreach (var m in liveMembers)
                             liveIds.Add(m.InternalId);
-                    }
 
-                    // Compare ground truth against live
                     foreach (var member in entry.Members)
                     {
                         if (liveIds.Contains(member.InternalId))
@@ -130,11 +115,8 @@ namespace ListProtection.EntryPoints
 
                         logger.Info(
                             "[MissingMemberDetector] Member absent from live playlist: '{0}' | InternalId={1} | playlist={2}",
-                            member.Name,
-                            member.InternalId,
-                            playlistIdN);
+                            member.Name, member.InternalId, playlistIdN);
 
-                        // Dedup — skip if already recorded
                         var alreadyRecorded = false;
                         foreach (var existing in missing)
                         {
@@ -150,8 +132,7 @@ namespace ListProtection.EntryPoints
                         {
                             logger.Info(
                                 "[MissingMemberDetector] Already recorded as missing — skipping: '{0}' | playlist={1}",
-                                member.Name,
-                                playlistIdN);
+                                member.Name, playlistIdN);
                             continue;
                         }
 
@@ -165,10 +146,7 @@ namespace ListProtection.EntryPoints
 
                         logger.Info(
                             "[MissingMemberDetector] Recorded missing member: '{0}' | InternalId={1} | playlist='{2}' ({3})",
-                            member.Name,
-                            member.InternalId,
-                            entry.PlaylistName,
-                            playlistIdN);
+                            member.Name, member.InternalId, entry.PlaylistName, playlistIdN);
 
                         changed = true;
                     }
@@ -177,22 +155,13 @@ namespace ListProtection.EntryPoints
                 if (changed)
                 {
                     plugin.WriterLock.Wait();
-                    try
-                    {
-                        plugin.MissingMembersStore.Save(missing);
-                    }
-                    finally
-                    {
-                        plugin.WriterLock.Release();
-                    }
+                    try { plugin.MissingMembersStore.Save(missing); }
+                    finally { plugin.WriterLock.Release(); }
+
                     logger.Info("[MissingMemberDetector] Detection complete — store updated");
 
-                    // Write MissingDetected events — one per affected playlist
                     try
                     {
-                        // Group new missing records by playlist for payload building
-                        // We re-load to get only the records that were just added
-                        // (all records in 'missing' that are new this run)
                         var byPlaylist = new Dictionary<string, List<MissingMemberEntry>>(StringComparer.OrdinalIgnoreCase);
                         foreach (var record in missing)
                         {

@@ -27,7 +27,6 @@
 		<Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
 		<Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
 		<Compile Remove="EntryPoints\ScanAndAddEventProbe.cs" />
-		<Compile Remove="EntryPoints\Playlisteventprobe.cs" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Remove="Handover.md" />

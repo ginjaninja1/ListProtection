@@ -1,50 +1,52 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Scoring;
+using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
-using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Text.RegularExpressions;
+using System.Linq;
 
 namespace ListProtection.EntryPoints
 {
     /// <summary>
-    /// Shared candidate discovery logic called by CandidateDiscoveryTask.
+    /// Shared candidate discovery logic — called by event-driven detection
+    /// (MissingMemberDetectionService), PostScanCandidateTask, and the manual
+    /// CandidateDiscoveryTask dashboard task.
     ///
-    /// Static to avoid any temptation to hold state here — all state
-    /// lives in the stores accessed via ListProtectionPlugin.Instance.
+    /// Static — all state lives in the plugin stores.
     ///
-    /// Scoring signals (all derived from GroundTruthMember.Name and .Path):
+    /// Architecture:
+    ///   Evidence collection and scoring are fully separated from the discovery loop.
+    ///   BaseItemEvidenceCollector runs for all item types.
+    ///   AudioEvidenceCollector chains on top when gt.MediaType == "Audio".
+    ///   CandidateScorer is stateless — it sums EvidenceFact weights from ScoringWeights.
     ///
-    ///   FilenameStemExact      100 — candidate FileNameWithoutExtension matches GT path stem exactly (case-insensitive)
-    ///   FilenameStemNormalized  70 — after stripping leading track-number prefix ("02. "), stems match
-    ///   NameExact               60 — candidate Name matches GT Name exactly (case-insensitive)
-    ///   NameNormalized          40 — after normalising whitespace/case, names match
-    ///   ParentFolderMatch       20 — immediate parent folder name matches (album folder)
+    /// Deduplication:
+    ///   If a (PlaylistId, MissingMember.InternalId, CandidateInternalId) triple already
+    ///   exists and the new score is higher, the stored record is updated (score +
+    ///   signals + LastScoredAt). If the new score is equal or lower, the record is
+    ///   left unchanged. This means CandidateRefreshTask re-runs are always meaningful.
     ///
-    /// A candidate must score > 0 to be recorded.
-    /// Candidates are stored sorted by Score descending, highest first.
-    /// Deduplication: same (MissingMember.InternalId, PlaylistId, CandidateInternalId) triple is not re-recorded.
+    /// Candidate pool:
+    ///   Items are queried by MediaType from the GT member. Legacy GT members with a
+    ///   null MediaType fall back to querying Audio (preserving prior behaviour).
+    ///   When a gt.MediaType is not yet supported, discovery logs and skips.
     ///
-    /// Event payload format (CandidateFound):
-    ///   "[POS X] Track Name | score=160 | /path/to/candidate.flac"
-    ///   X = 1-based position of the missing member in the playlist's ground truth.
+    /// Belt-and-braces note:
+    ///   PostScanCandidateTask (ILibraryPostScanTask + scheduled 04:00 daily) is the
+    ///   load-bearing safety net for the upgrade scenario (MP3 → FLAC). In that case
+    ///   the replacement item does not exist at ItemRemoved time — the event-driven
+    ///   fast path produces zero candidates. The post-scan task runs after Emby has
+    ///   fully ingested the new file and its metadata, at which point the audio-specific
+    ///   signals (Album, AlbumArtist, Duration) are available and scoring is reliable.
     /// </summary>
     internal static class CandidateDiscoverer
     {
-        // ── Signal weights ─────────────────────────────────────────────────
-
-        private const int W_FILENAME_STEM_EXACT = 100;
-        private const int W_FILENAME_STEM_NORMALIZED = 70;
-        private const int W_NAME_EXACT = 60;
-        private const int W_NAME_NORMALIZED = 40;
-        private const int W_PARENT_FOLDER_MATCH = 20;
-
-        // Matches leading track-number prefixes: "02. ", "02 - ", "02-", "2. ", etc.
-        private static readonly Regex TrackPrefixRegex =
-            new Regex(@"^\d{1,3}[\s\.\-]+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        // Registered evidence collectors — order matters for logging only.
+        // BaseItem collector is always applied; audio collector chains on top.
+        private static readonly IEvidenceCollector BaseCollector = new BaseItemEvidenceCollector();
+        private static readonly IEvidenceCollector AudioCollector = new AudioEvidenceCollector();
 
         // ── Entry point ────────────────────────────────────────────────────
 
@@ -81,19 +83,24 @@ namespace ListProtection.EntryPoints
                     return;
                 }
 
-                // Query all Audio items once — shared across all missing members
-                var allAudio = libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = new[] { "Audio" },
-                    Recursive = true
-                });
+                // Build the candidate pool once per media type encountered.
+                // For now: Audio (current) + null-MediaType legacy (also Audio).
+                // Future: Episode, Movie pools added here without touching loop logic.
+                var itemPoolByType = new Dictionary<string, BaseItem[]>(StringComparer.OrdinalIgnoreCase);
 
-                logger.Info("[CandidateDiscoverer] Library returned {0} Audio item(s)", allAudio?.Length ?? 0);
-
-                if (allAudio == null || allAudio.Length == 0)
+                foreach (var missingEntry in missing)
                 {
-                    logger.Warn("[CandidateDiscoverer] No Audio items found — aborting");
-                    return;
+                    if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN)
+                        continue;
+
+                    var mediaType = missingEntry.Member?.MediaType ?? "Audio";
+
+                    if (!itemPoolByType.ContainsKey(mediaType))
+                    {
+                        var pool = QueryItemPool(mediaType, libraryManager, logger);
+                        if (pool != null)
+                            itemPoolByType[mediaType] = pool;
+                    }
                 }
 
                 foreach (var missingEntry in missing)
@@ -101,69 +108,37 @@ namespace ListProtection.EntryPoints
                     if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN)
                         continue;
 
+                    var mediaType = missingEntry.Member?.MediaType ?? "Audio";
+
+                    if (!itemPoolByType.TryGetValue(mediaType, out var pool) || pool.Length == 0)
+                    {
+                        logger.Info(
+                            "[CandidateDiscoverer] No item pool for MediaType='{0}' — skipping member '{1}'",
+                            mediaType, missingEntry.Member?.Name ?? "(null)");
+                        continue;
+                    }
+
                     ProcessMissingMember(
                         missingEntry,
                         gtStore,
-                        allAudio,
+                        pool,
                         existing,
+                        mediaType,
                         logger,
                         ref changed);
                 }
 
                 if (changed)
                 {
-                    // Re-sort entire store by Score descending before saving
                     existing.Sort((a, b) => b.Score.CompareTo(a.Score));
                     plugin.CandidateStore.Save(existing);
                     logger.Info("[CandidateDiscoverer] Discovery complete — store updated");
 
-                    // Write CandidateFound events — one per affected playlist.
-                    // Payload lines include [POS X] prefix using the missing member's GT position.
-                    try
-                    {
-                        var byPlaylist = new Dictionary<string, List<CandidateEntry>>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var c in existing)
-                        {
-                            if (!byPlaylist.TryGetValue(c.PlaylistId, out var list))
-                                byPlaylist[c.PlaylistId] = list = new List<CandidateEntry>();
-                            list.Add(c);
-                        }
-
-                        foreach (var kvp in byPlaylist)
-                        {
-                            gtStore.TryGetValue(kvp.Key, out var gtEntry);
-
-                            var payloadLines = new List<string>();
-                            foreach (var c in kvp.Value)
-                            {
-                                var internalId = c.MissingMember?.InternalId ?? -1;
-                                var pos = GetGroundTruthPosition(internalId, gtEntry);
-                                var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
-                                payloadLines.Add(
-                                    posPrefix +
-                                    (c.CandidateName ?? "(unnamed)") +
-                                    " | score=" + c.Score +
-                                    " | " + (c.CandidatePath ?? string.Empty));
-                            }
-
-                            plugin.EventStore.Append(new EventEntry
-                            {
-                                EventType = "CandidateFound",
-                                PlaylistId = kvp.Key,
-                                PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
-                                OccurredAt = DateTime.UtcNow,
-                                Payload = string.Join("\n", payloadLines)
-                            });
-                        }
-                    }
-                    catch (Exception evEx)
-                    {
-                        logger.ErrorException("[CandidateDiscoverer] Failed to write CandidateFound event", evEx);
-                    }
+                    WriteCandidateFoundEvents(existing, gtStore, plugin, logger);
                 }
                 else
                 {
-                    logger.Info("[CandidateDiscoverer] Discovery complete — no new candidates found");
+                    logger.Info("[CandidateDiscoverer] Discovery complete — no changes");
                 }
             }
             catch (Exception ex)
@@ -177,117 +152,72 @@ namespace ListProtection.EntryPoints
         private static void ProcessMissingMember(
             MissingMemberEntry missingEntry,
             Dictionary<string, GroundTruthEntry> gtStore,
-            BaseItem[] allAudio,
+            BaseItem[] pool,
             List<CandidateEntry> existing,
+            string mediaType,
             ILogger logger,
             ref bool changed)
         {
             var member = missingEntry.Member;
 
             logger.Info(
-                "[CandidateDiscoverer] Processing missing member: '{0}' | InternalId={1} | playlist='{2}' ({3})",
-                member.Name,
-                member.InternalId,
-                missingEntry.PlaylistName,
-                missingEntry.PlaylistId);
+                "[CandidateDiscoverer] Processing missing member: '{0}' | InternalId={1} | MediaType={2} | playlist='{3}' ({4})",
+                member.Name, member.InternalId, mediaType,
+                missingEntry.PlaylistName, missingEntry.PlaylistId);
 
-            // Build exclusion set from ground truth for this playlist
+            // Exclude items already in this playlist's ground truth
             var excludedIds = new HashSet<long>();
             if (gtStore.TryGetValue(missingEntry.PlaylistId, out var gtEntry) && gtEntry.Members != null)
-            {
                 foreach (var m in gtEntry.Members)
                     excludedIds.Add(m.InternalId);
-            }
 
-            // Pre-compute GT-derived comparison values once per missing member
-            var gtStem = GetFilenameStem(member.Path);
-            var gtStemNorm = NormalizeStem(gtStem);
-            var gtNameNorm = NormalizeName(member.Name);
-            var gtParentDir = GetParentFolderName(member.Path);
-
-            logger.Info(
-                "[CandidateDiscoverer]   GT stem='{0}' | stemNorm='{1}' | nameNorm='{2}' | parentDir='{3}'",
-                gtStem, gtStemNorm, gtNameNorm, gtParentDir);
+            // Select additional evidence collector for this media type
+            var typeCollector = GetTypeCollector(mediaType);
 
             var candidatesFound = 0;
+            var candidatesUpdated = 0;
 
-            foreach (var item in allAudio)
+            foreach (var item in pool)
             {
-                // Never suggest an item that is already in the playlist's ground truth
-                if (excludedIds.Contains(item.InternalId))
-                    continue;
+                if (excludedIds.Contains(item.InternalId)) continue;
+                if (item.InternalId == member.InternalId) continue;
 
-                // Never suggest the missing item itself
-                if (item.InternalId == member.InternalId)
-                    continue;
+                // ── Collect evidence ───────────────────────────────────────
+                var facts = new List<EvidenceFact>();
+                facts.AddRange(BaseCollector.Collect(member, item));
+                if (typeCollector != null)
+                    facts.AddRange(typeCollector.Collect(member, item));
 
-                var score = 0;
-                var signals = new List<string>();
+                // ── Score ──────────────────────────────────────────────────
+                CandidateScorer.Score(facts, out var score, out var signals);
 
-                var candidateStem = item.FileNameWithoutExtension ?? string.Empty;
-                var candidateStemNorm = NormalizeStem(candidateStem);
-                var candidateNameNorm = NormalizeName(item.Name ?? string.Empty);
-                var candidateParentDir = GetParentFolderName(item.Path);
+                if (score == 0) continue;
 
-                // Signal 1 — FilenameStemExact
-                if (!string.IsNullOrEmpty(gtStem) &&
-                    string.Equals(gtStem, candidateStem, StringComparison.OrdinalIgnoreCase))
+                // ── Deduplication — update-on-improvement ──────────────────
+                var existingEntry = existing.FirstOrDefault(c =>
+                    c.PlaylistId == missingEntry.PlaylistId &&
+                    c.MissingMember?.InternalId == member.InternalId &&
+                    c.CandidateInternalId == item.InternalId);
+
+                if (existingEntry != null)
                 {
-                    score += W_FILENAME_STEM_EXACT;
-                    signals.Add("FilenameStemExact:" + W_FILENAME_STEM_EXACT);
-                }
-                // Signal 2 — FilenameStemNormalized (only if exact didn't already match)
-                else if (!string.IsNullOrEmpty(gtStemNorm) &&
-                         string.Equals(gtStemNorm, candidateStemNorm, StringComparison.OrdinalIgnoreCase))
-                {
-                    score += W_FILENAME_STEM_NORMALIZED;
-                    signals.Add("FilenameStemNormalized:" + W_FILENAME_STEM_NORMALIZED);
-                }
-
-                // Signal 3 — NameExact
-                if (!string.IsNullOrEmpty(member.Name) &&
-                    string.Equals(member.Name, item.Name, StringComparison.OrdinalIgnoreCase))
-                {
-                    score += W_NAME_EXACT;
-                    signals.Add("NameExact:" + W_NAME_EXACT);
-                }
-                // Signal 4 — NameNormalized (only if exact didn't already match)
-                else if (!string.IsNullOrEmpty(gtNameNorm) &&
-                         string.Equals(gtNameNorm, candidateNameNorm, StringComparison.OrdinalIgnoreCase))
-                {
-                    score += W_NAME_NORMALIZED;
-                    signals.Add("NameNormalized:" + W_NAME_NORMALIZED);
-                }
-
-                // Signal 5 — ParentFolderMatch
-                if (!string.IsNullOrEmpty(gtParentDir) && !string.IsNullOrEmpty(candidateParentDir) &&
-                    string.Equals(gtParentDir, candidateParentDir, StringComparison.OrdinalIgnoreCase))
-                {
-                    score += W_PARENT_FOLDER_MATCH;
-                    signals.Add("ParentFolderMatch:" + W_PARENT_FOLDER_MATCH);
-                }
-
-                if (score == 0)
-                    continue;
-
-                // Deduplication — skip if already recorded
-                var alreadyRecorded = false;
-                foreach (var c in existing)
-                {
-                    if (c.PlaylistId == missingEntry.PlaylistId
-                        && c.MissingMember?.InternalId == member.InternalId
-                        && c.CandidateInternalId == item.InternalId)
+                    if (score > existingEntry.Score)
                     {
-                        alreadyRecorded = true;
-                        break;
-                    }
-                }
+                        logger.Info(
+                            "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score {2}→{3} | Signals=[{4}]",
+                            item.Name, item.InternalId, existingEntry.Score, score,
+                            string.Join(", ", signals));
 
-                if (alreadyRecorded)
-                {
-                    logger.Info(
-                        "[CandidateDiscoverer]   Already recorded — skipping candidate InternalId={0}",
-                        item.InternalId);
+                        existingEntry.Score = score;
+                        existingEntry.MatchedSignals = signals;
+                        existingEntry.LastScoredAt = DateTime.UtcNow;
+                        changed = true;
+                        candidatesUpdated++;
+                    }
+                    else
+                    {
+                        existingEntry.LastScoredAt = DateTime.UtcNow;
+                    }
                     continue;
                 }
 
@@ -302,68 +232,121 @@ namespace ListProtection.EntryPoints
                     CandidatePath = item.Path,
                     Score = score,
                     MatchedSignals = signals,
-                    DiscoveredAt = DateTime.UtcNow
+                    DiscoveredAt = DateTime.UtcNow,
+                    LastScoredAt = DateTime.UtcNow
                 });
 
                 logger.Info(
                     "[CandidateDiscoverer]   Candidate recorded: '{0}' | InternalId={1} | Score={2} | Signals=[{3}]",
-                    item.Name,
-                    item.InternalId,
-                    score,
-                    string.Join(", ", signals));
+                    item.Name, item.InternalId, score, string.Join(", ", signals));
 
                 candidatesFound++;
                 changed = true;
             }
 
             logger.Info(
-                "[CandidateDiscoverer]   Done — {0} new candidate(s) recorded for '{1}'",
-                candidatesFound,
-                member.Name);
+                "[CandidateDiscoverer]   Done — {0} new, {1} updated candidate(s) for '{2}'",
+                candidatesFound, candidatesUpdated, member.Name);
         }
 
-        // ── Scoring helpers ────────────────────────────────────────────────
+        // ── Item pool query ────────────────────────────────────────────────
 
-        private static string GetFilenameStem(string fullPath)
+        private static BaseItem[] QueryItemPool(
+            string mediaType,
+            ILibraryManager libraryManager,
+            ILogger logger)
         {
-            if (string.IsNullOrEmpty(fullPath)) return string.Empty;
-            try { return Path.GetFileNameWithoutExtension(fullPath) ?? string.Empty; }
-            catch { return string.Empty; }
+            // Supported types. Extend here when new media types are added.
+            string embyType;
+            switch (mediaType)
+            {
+                case "Audio": embyType = "Audio"; break;
+                case "Episode": embyType = "Episode"; break;
+                case "Movie": embyType = "Movie"; break;
+                default:
+                    logger.Warn(
+                        "[CandidateDiscoverer] Unsupported MediaType '{0}' — no pool built",
+                        mediaType);
+                    return null;
+            }
+
+            var pool = libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { embyType },
+                Recursive = true
+            });
+
+            logger.Info(
+                "[CandidateDiscoverer] Queried MediaType='{0}' ({1}) — {2} item(s)",
+                mediaType, embyType, pool?.Length ?? 0);
+
+            return pool;
         }
 
-        private static string NormalizeStem(string stem)
+        // ── Collector selection ────────────────────────────────────────────
+
+        private static IEvidenceCollector GetTypeCollector(string mediaType)
         {
-            if (string.IsNullOrEmpty(stem)) return string.Empty;
-            var stripped = TrackPrefixRegex.Replace(stem.Trim(), string.Empty);
-            return stripped.ToLowerInvariant();
+            switch (mediaType)
+            {
+                case "Audio": return AudioCollector;
+                // Future: case "Episode": return EpisodeCollector;
+                default: return null;
+            }
         }
 
-        private static string NormalizeName(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return string.Empty;
-            return Regex.Replace(name.Trim().ToLowerInvariant(), @"\s+", " ");
-        }
+        // ── Event writing ──────────────────────────────────────────────────
 
-        private static string GetParentFolderName(string fullPath)
+        private static void WriteCandidateFoundEvents(
+            List<CandidateEntry> all,
+            Dictionary<string, GroundTruthEntry> gtStore,
+            ListProtectionPlugin plugin,
+            ILogger logger)
         {
-            if (string.IsNullOrEmpty(fullPath)) return string.Empty;
             try
             {
-                var dir = Path.GetDirectoryName(fullPath);
-                if (string.IsNullOrEmpty(dir)) return string.Empty;
-                var folderName = Path.GetFileName(dir) ?? string.Empty;
-                folderName = Regex.Replace(folderName, @"^[\[\(]\d{4}[\]\)]\s*", string.Empty).Trim();
-                return folderName;
+                var byPlaylist = new Dictionary<string, List<CandidateEntry>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var c in all)
+                {
+                    if (!byPlaylist.TryGetValue(c.PlaylistId, out var list))
+                        byPlaylist[c.PlaylistId] = list = new List<CandidateEntry>();
+                    list.Add(c);
+                }
+
+                foreach (var kvp in byPlaylist)
+                {
+                    gtStore.TryGetValue(kvp.Key, out var gtEntry);
+
+                    var payloadLines = new List<string>();
+                    foreach (var c in kvp.Value)
+                    {
+                        var pos = GetGroundTruthPosition(c.MissingMember?.InternalId ?? -1, gtEntry);
+                        var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
+                        payloadLines.Add(
+                            posPrefix +
+                            (c.CandidateName ?? "(unnamed)") +
+                            " | score=" + c.Score +
+                            " | " + (c.CandidatePath ?? string.Empty));
+                    }
+
+                    plugin.EventStore.Append(new EventEntry
+                    {
+                        EventType = "CandidateFound",
+                        PlaylistId = kvp.Key,
+                        PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
+                        OccurredAt = DateTime.UtcNow,
+                        Payload = string.Join("\n", payloadLines)
+                    });
+                }
             }
-            catch { return string.Empty; }
+            catch (Exception ex)
+            {
+                logger.ErrorException("[CandidateDiscoverer] Failed to write CandidateFound event", ex);
+            }
         }
 
         // ── Position helper ────────────────────────────────────────────────
 
-        /// <summary>
-        /// Returns the 0-based index of the member in the GT Members list,
-        /// or -1 if not found or gtEntry is null.
-        /// </summary>
         private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
         {
             if (gtEntry?.Members == null || internalId <= 0) return -1;

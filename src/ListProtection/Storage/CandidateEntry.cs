@@ -70,5 +70,13 @@ namespace ListProtection.Storage
         /// UTC timestamp when this candidate was first discovered.
         /// </summary>
         public DateTime DiscoveredAt { get; set; }
+
+        /// <summary>
+        /// UTC timestamp of the most recent score calculation.
+        /// Updated on every discovery pass that re-evaluates this candidate.
+        /// Used by CandidateRefreshTask to expire and re-score stale candidates.
+        /// Null for entries recorded before this field was added.
+        /// </summary>
+        public DateTime? LastScoredAt { get; set; }
     }
 }

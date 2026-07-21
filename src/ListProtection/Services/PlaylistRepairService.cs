@@ -223,9 +223,6 @@ namespace ListProtection.Services
                     }
 
                     // Step 3 — build desired order from GT, substituting candidates for missing slots
-                    // GT members are in original playlist order (ordered by ListItemEntryId ascending).
-                    // Members with no live InternalId and no candidate are included as-is — Emby will
-                    // silently skip invalid InternalIds, preserving as much of GT as possible.
                     var desiredInternalIds = new List<long>();
                     if (oldGtEntry?.Members != null)
                     {
@@ -240,7 +237,6 @@ namespace ListProtection.Services
                             }
                             else if (!repairedMissingIds.Contains(gtMember.InternalId))
                             {
-                                // Present member — include in original position
                                 desiredInternalIds.Add(gtMember.InternalId);
                             }
                         }
@@ -268,22 +264,14 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    // Step 5 — read back to get new ListItemEntryIds for GT update.
+                    // Step 5 — read back and update GT.
                     // PROVEN: Playlist.GetItemList returns members in correct playlist order.
+                    // ── CHANGED: use GroundTruthMemberFactory for all fields ──
                     var rebuiltMembers = activePlaylist.GetItemList(new InternalItemsQuery());
 
                     var updatedMembers = new List<GroundTruthMember>(rebuiltMembers.Length);
                     foreach (var m in rebuiltMembers)
-                    {
-                        updatedMembers.Add(new GroundTruthMember
-                        {
-                            InternalId = m.InternalId,
-                            Id = m.Id.ToString("N"),
-                            Name = m.Name ?? string.Empty,
-                            Path = m.Path ?? string.Empty,
-                            ListItemEntryId = m.ListItemEntryId
-                        });
-                    }
+                        updatedMembers.Add(GroundTruthMemberFactory.FromItem(m));
 
                     groundTruth[activePlaylistId] = new GroundTruthEntry
                     {
@@ -388,23 +376,15 @@ namespace ListProtection.Services
 
                     // PROVEN: Playlist.GetItemList returns members in correct playlist order.
                     // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
+                    // ── CHANGED: use GroundTruthMemberFactory for all fields ──
                     var newPlaylistEntity = resolvedItems[0] as MediaBrowser.Controller.Playlists.Playlist;
                     var capturedMembers = newPlaylistEntity != null
                         ? newPlaylistEntity.GetItemList(new InternalItemsQuery())
-                        : System.Array.Empty<MediaBrowser.Controller.Entities.BaseItem>();
+                        : System.Array.Empty<BaseItem>();
 
                     var newMembers = new List<GroundTruthMember>(capturedMembers.Length);
                     foreach (var m in capturedMembers)
-                    {
-                        newMembers.Add(new GroundTruthMember
-                        {
-                            InternalId = m.InternalId,
-                            Id = m.Id.ToString("N"),
-                            Name = m.Name ?? string.Empty,
-                            Path = m.Path ?? string.Empty,
-                            ListItemEntryId = m.ListItemEntryId
-                        });
-                    }
+                        newMembers.Add(GroundTruthMemberFactory.FromItem(m));
 
                     if (oldGtEntry?.Members != null)
                     {
@@ -447,7 +427,6 @@ namespace ListProtection.Services
                     var candidateName = candidate?.CandidateName ?? "(unknown)";
                     var candidatePath = candidate?.CandidatePath ?? string.Empty;
 
-                    // Prefix with [POS X] using the member's 1-based position in GT
                     var pos = GetGroundTruthPosition(missingId, oldGtEntry);
                     var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
 
@@ -498,8 +477,7 @@ namespace ListProtection.Services
                 }
             }
 
-            // Persist — acquire writer lock for the full save block so all three
-            // stores are updated atomically with respect to other writers
+            // Persist — acquire writer lock for the full save block
             plugin.WriterLock.Wait();
             try
             {
@@ -529,10 +507,6 @@ namespace ListProtection.Services
 
         // ── Helpers ────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Returns the 0-based index of the member in the GT Members list,
-        /// or -1 if not found or gtEntry is null.
-        /// </summary>
         private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
         {
             if (gtEntry?.Members == null || internalId <= 0) return -1;

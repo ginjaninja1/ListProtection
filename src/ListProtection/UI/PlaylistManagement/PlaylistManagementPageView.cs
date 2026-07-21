@@ -82,14 +82,16 @@ namespace ListProtection.UI.PlaylistManagement
                 }
 
                 // ── Action: Open History Dialog ────────────────────────────
+                // Available for any playlist that has event history — not just currently protected ones.
                 var openHistoryRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenHistory && !string.IsNullOrEmpty(r.Id));
 
                 if (openHistoryRow != null)
                 {
-                    var protectedIds = _store.Load();
-                    if (!protectedIds.Contains(openHistoryRow.Id))
+                    // Check whether this playlist has any history before opening
+                    var historyCheck = ListProtectionPlugin.Instance.EventStore.LoadForPlaylist(openHistoryRow.Id);
+                    if (historyCheck.Count == 0)
                     {
-                        _logger.Info("[PlaylistManagementPageView] OpenHistory on unprotected row ignored");
+                        _logger.Info("[PlaylistManagementPageView] OpenHistory — no events recorded for {0}, ignoring", openHistoryRow.Id);
                         ContentData = BuildOptions();
                         return this;
                     }
@@ -261,19 +263,40 @@ namespace ListProtection.UI.PlaylistManagement
                         _logger);
                 }
 
-                // Write Protect events for newly protected playlists
-                foreach (var newId in beingProtected)
-                {
-                    var nameForEvent = ui.PlaylistRows.FirstOrDefault(r => r.Id == newId)?.Name ?? "(unnamed)";
-                    WriteEvent("Protect", newId, nameForEvent, string.Empty);
-                }
-
+                // ── Write Protect events AFTER ReconcileGroundTruth so we have member data ──
                 _logger.Info(
                     "[PlaylistManagementPageView] Saving {0} protected playlist(s)",
                     incomingProtectedIds.Count);
 
                 _store.Save(incomingProtectedIds);
+
+                // Capture GT first — Protect event payload uses the captured members
                 ReconcileGroundTruth(incomingProtectedIds);
+
+                // Now write Protect events with member payload
+                var freshGt = _groundTruthStore.Load();
+                foreach (var newId in beingProtected)
+                {
+                    var nameForEvent = ui.PlaylistRows.FirstOrDefault(r => r.Id == newId)?.Name ?? "(unnamed)";
+                    freshGt.TryGetValue(newId, out var gtEntry);
+                    var members = gtEntry?.Members;
+
+                    string payload;
+                    if (members == null || members.Count == 0)
+                    {
+                        payload = string.Empty;
+                    }
+                    else
+                    {
+                        // One line per member: "Name | Path"
+                        var lines = new List<string>(members.Count);
+                        foreach (var m in members)
+                            lines.Add((m.Name ?? "(unnamed)") + " | " + (m.Path ?? string.Empty));
+                        payload = string.Join("\n", lines);
+                    }
+
+                    WriteEvent("Protect", newId, nameForEvent, payload);
+                }
             }
             catch (Exception ex)
             {
@@ -396,6 +419,14 @@ namespace ListProtection.UI.PlaylistManagement
             var groundTruth = _groundTruthStore.Load();
             var missingRecords = ListProtectionPlugin.Instance.MissingMembersStore.Load();
 
+            // Collect all playlist IDs that have any event history — History button is
+            // shown for these even if the playlist is no longer protected.
+            var allEvents = ListProtectionPlugin.Instance.EventStore.Load();
+            var idsWithHistory = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ev in allEvents)
+                if (!string.IsNullOrEmpty(ev.PlaylistId))
+                    idsWithHistory.Add(ev.PlaylistId);
+
             var items = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Playlist" },
@@ -479,6 +510,7 @@ namespace ListProtection.UI.PlaylistManagement
                 var idString = item.Id.ToString("N");
                 var isProtected = protectedIds.Contains(idString);
                 var gtEntry = groundTruth.TryGetValue(idString, out var gt) ? gt : null;
+                var hasHistory = idsWithHistory.Contains(idString);
 
                 int memberCount;
                 if (isProtected && gtEntry != null)
@@ -528,6 +560,8 @@ namespace ListProtection.UI.PlaylistManagement
                     RepairAll = false,
                     OpenRepair = false,
                     OpenGroundTruth = false,
+                    // History button visible for any playlist with recorded events,
+                    // regardless of current protection status
                     OpenHistory = false,
                     Detail = detailRows
                 });
@@ -538,12 +572,6 @@ namespace ListProtection.UI.PlaylistManagement
 
         // ── Ground Truth ───────────────────────────────────────────────────
 
-        /// <summary>
-        /// For each protected playlist with no existing GT entry, captures members fresh.
-        /// Existing entries are left untouched — they are always current (maintained by
-        /// PlaylistMaintenanceService) or freshly written here on first protect.
-        /// Soft-delete/restore is gone — unprotect hard-deletes the entry.
-        /// </summary>
         private void ReconcileGroundTruth(HashSet<string> protectedIds)
         {
             try
@@ -553,7 +581,7 @@ namespace ListProtection.UI.PlaylistManagement
                 foreach (var playlistId in protectedIds)
                 {
                     if (entries.ContainsKey(playlistId))
-                        continue; // Already captured — PlaylistMaintenanceService keeps it current
+                        continue;
 
                     var capture = CaptureMembers(playlistId);
                     if (capture == null) continue;
@@ -628,16 +656,7 @@ namespace ListProtection.UI.PlaylistManagement
 
                 var result = new List<GroundTruthMember>(members.Length);
                 foreach (var m in members)
-                {
-                    result.Add(new GroundTruthMember
-                    {
-                        InternalId = m.InternalId,
-                        Id = m.Id.ToString("N"),
-                        Name = m.Name ?? string.Empty,
-                        Path = m.Path ?? string.Empty,
-                        ListItemEntryId = m.ListItemEntryId
-                    });
-                }
+                    result.Add(GroundTruthMemberFactory.FromItem(m));
 
                 return new CaptureResult
                 {

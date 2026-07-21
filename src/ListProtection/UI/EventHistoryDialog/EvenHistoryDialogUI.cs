@@ -10,11 +10,12 @@ namespace ListProtection.UI.EventHistoryDialog
     /// Full-screen read-only dialog showing event history for a single playlist.
     ///
     /// Master grid: Type | When | Detail (summary cell)
-    ///   Detail shows the payload line directly if 1 track,
-    ///   or "Expand to see N tracks" if multiple.
+    ///   Detail shows the payload line directly if 1 item,
+    ///   or "X items protected / missing / etc." if multiple.
     ///
     /// Child grid (PayloadDetail): expands to show one row per payload line.
-    ///   Only populated for multi-line payloads — single-track events have
+    ///   Columns: Pos | Item
+    ///   Only populated for multi-line payloads — single-item events have
     ///   no expand arrow (empty PayloadDetail array).
     /// </summary>
     public class EventHistoryDialogUI : EditableObjectBase
@@ -85,7 +86,11 @@ namespace ListProtection.UI.EventHistoryDialog
                 false,
                 false,
                 false,
-                false);
+                false)
+            {
+                heightMode = DxGridOptions.GridHeightMode.auto,
+                columnAutoWidth = false
+            };
 
             if (detailOptions.columns != null)
             {
@@ -94,8 +99,20 @@ namespace ListProtection.UI.EventHistoryDialog
                     if (col.dataField == null) continue;
                     col.allowEditing = false;
 
-                    if (col.dataField == "Idx")
-                        col.visible = false;
+                    switch (col.dataField)
+                    {
+                        case "Idx":
+                            col.visible = false;
+                            break;
+
+                        case "Pos":
+                            col.width = 55;
+                            break;
+
+                        case "Line":
+                            // Takes remaining width
+                            break;
+                    }
                 }
             }
 

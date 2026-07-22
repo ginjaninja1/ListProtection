@@ -7,52 +7,68 @@ namespace ListProtection.Scoring
     ///
     /// All weights live here — adding a new signal means:
     ///   1. Add a constant in the appropriate group below.
-    ///   2. Fire the EvidenceFact in the correct IEvidenceCollector.
+    ///   2. Register it in the lookup dictionary below.
+    ///   3. Fire the EvidenceFact in the correct IEvidenceCollector.
     ///   Done — the scorer picks it up automatically.
     ///
-    /// Weight philosophy:
-    ///   100+ = sufficient alone to be confident — suitable for auto-repair
-    ///    50–99 = strong supporting signal — needs corroboration
-    ///    20–49 = useful tiebreaker — too weak alone
-    ///    1–19  = weak contextual hint — rarely decisive
+    /// Auto-repair for Audio is governed by a hard gate (AudioAutoRepairEligibility),
+    /// NOT by this score. The score is used solely to rank candidates for the user
+    /// and to select the best candidate when multiple pass the gate.
     ///
-    /// AutoRepair default threshold is 100 (FilenameStemExact alone).
-    /// A combined audio score of FilenameStemExact(100) + NameExact(60) = 160
-    /// means very high confidence.
+    /// Weight philosophy (for ranking purposes only):
+    ///    50+  = strong identity signal — decisive on its own
+    ///    20–49 = useful corroborating signal
+    ///    1–19  = weak contextual hint
     ///
     /// ── BaseItem signals (all media types) ────────────────────────────────
     ///
-    ///   FilenameStemExact      100  Stem without extension, case-insensitive exact
-    ///   FilenameStemNormalized  70  After stripping track-number prefix ("02. ")
-    ///   NameExact               60  item.Name exact, case-insensitive
-    ///   NameNormalized          40  whitespace-collapsed lowercase
-    ///   ParentFolderMatch       20  Immediate parent folder name
-    ///   GrandparentFolderMatch  15  Two levels up (artist folder for music)
+    ///   FilenameStemExact      25  Stem without extension, case-insensitive exact
+    ///   FilenameStemNormalized 15  After stripping track-number prefix ("02. ")
+    ///   NameExact              40  item.Name exact, case-insensitive
+    ///   NameNormalized         20  whitespace-collapsed lowercase
+    ///   ParentFolderMatch      15  Immediate parent folder name
+    ///   GrandparentFolderMatch 10  Two levels up (artist folder for music)
     ///
     /// ── Audio-specific signals ─────────────────────────────────────────────
     ///
-    ///   AlbumExact              50  item.Album exact, case-insensitive
-    ///   AlbumArtistExact        30  item.AlbumArtists[0] exact, case-insensitive
-    ///   IndexNumberMatch        20  item.IndexNumber == gt.IndexNumber
-    ///   DurationMatch           40  |RunTimeTicks delta| within 3 seconds
+    ///   ArtistExact            50  GT Artists[0] is exact member of candidate.Artists
+    ///   AlbumExact             40  item.Album exact, case-insensitive
+    ///   AlbumArtistExact       20  item.AlbumArtists[0] exact, case-insensitive
+    ///   IndexOnSameAlbum       30  track number matches AND album matches
+    ///   IndexOnDifferentAlbum  10  track number matches, album differs
+    ///   DurationMatch           5  |RunTimeTicks delta| within 3-second tolerance
+    ///
+    /// Example scores:
+    ///   Same track, same artist, same album, folder renamed:
+    ///     ArtistExact(50) + AlbumExact(40) + NameExact(40) + IndexOnSameAlbum(30)
+    ///     + GrandparentFolderMatch(10) = 170  [gate passes → auto-repairs]
+    ///
+    ///   Same track, same artist, compilation instead of studio album:
+    ///     ArtistExact(50) + NameExact(40) + IndexOnDifferentAlbum(10)
+    ///     + GrandparentFolderMatch(10) = 110  [gate fails → surfaces to user]
+    ///
+    ///   Wrong artist, same track name (Jessie Ware - Swan Song):
+    ///     Never reaches scoring — filtered by artist gate in CandidateDiscoverer.
     /// </summary>
     public static class ScoringWeights
     {
         // ── BaseItem signals ───────────────────────────────────────────────
 
-        public const int FilenameStemExact = 100;
-        public const int FilenameStemNormalized = 70;
-        public const int NameExact = 60;
-        public const int NameNormalized = 40;
-        public const int ParentFolderMatch = 20;
-        public const int GrandparentFolderMatch = 15;
+        public const int FilenameStemExact = 25;
+        public const int FilenameStemNormalized = 15;
+        public const int NameExact = 40;
+        public const int NameNormalized = 20;
+        public const int ParentFolderMatch = 15;
+        public const int GrandparentFolderMatch = 10;
 
         // ── Audio-specific signals ─────────────────────────────────────────
 
-        public const int AlbumExact = 50;
-        public const int AlbumArtistExact = 30;
-        public const int IndexNumberMatch = 20;
-        public const int DurationMatch = 40;
+        public const int ArtistExact = 50;
+        public const int AlbumExact = 40;
+        public const int AlbumArtistExact = 20;
+        public const int IndexOnSameAlbum = 30;
+        public const int IndexOnDifferentAlbum = 10;
+        public const int DurationMatch = 5;
 
         // ── Lookup table (signal name → weight) ───────────────────────────
 
@@ -65,9 +81,11 @@ namespace ListProtection.Scoring
                 { nameof(NameNormalized),         NameNormalized         },
                 { nameof(ParentFolderMatch),      ParentFolderMatch      },
                 { nameof(GrandparentFolderMatch), GrandparentFolderMatch },
+                { nameof(ArtistExact),            ArtistExact            },
                 { nameof(AlbumExact),             AlbumExact             },
                 { nameof(AlbumArtistExact),       AlbumArtistExact       },
-                { nameof(IndexNumberMatch),       IndexNumberMatch       },
+                { nameof(IndexOnSameAlbum),       IndexOnSameAlbum       },
+                { nameof(IndexOnDifferentAlbum),  IndexOnDifferentAlbum  },
                 { nameof(DurationMatch),          DurationMatch          },
             };
 

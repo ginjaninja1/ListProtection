@@ -22,6 +22,12 @@ namespace ListProtection.EntryPoints
     ///   AudioEvidenceCollector chains on top when gt.MediaType == "Audio".
     ///   CandidateScorer is stateless — it sums EvidenceFact weights from ScoringWeights.
     ///
+    /// Candidate cap:
+    ///   At most 3 candidates are retained per (PlaylistId, MissingMember) pair —
+    ///   the 3 highest-scoring. This keeps the store focused and the UI uncluttered.
+    ///   On each discovery run, lower-scoring candidates are evicted if a better one
+    ///   arrives and there is already a full set of 3.
+    ///
     /// Deduplication:
     ///   If a (PlaylistId, MissingMember.InternalId, CandidateInternalId) triple already
     ///   exists and the new score is higher, the stored record is updated (score +
@@ -43,6 +49,8 @@ namespace ListProtection.EntryPoints
     /// </summary>
     internal static class CandidateDiscoverer
     {
+        private const int MaxCandidatesPerMember = 3;
+
         // Registered evidence collectors — order matters for logging only.
         // BaseItem collector is always applied; audio collector chains on top.
         private static readonly IEvidenceCollector BaseCollector = new BaseItemEvidenceCollector();
@@ -50,10 +58,6 @@ namespace ListProtection.EntryPoints
 
         // ── Entry point ────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Discovers and scores candidates for all active missing members.
-        /// If targetPlaylistIdN is non-null, only processes that playlist.
-        /// </summary>
         internal static void RunDiscovery(
             string targetPlaylistIdN,
             ILibraryManager libraryManager,
@@ -84,8 +88,6 @@ namespace ListProtection.EntryPoints
                 }
 
                 // Build the candidate pool once per media type encountered.
-                // For now: Audio (current) + null-MediaType legacy (also Audio).
-                // Future: Episode, Movie pools added here without touching loop logic.
                 var itemPoolByType = new Dictionary<string, BaseItem[]>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var missingEntry in missing)
@@ -171,7 +173,6 @@ namespace ListProtection.EntryPoints
                 foreach (var m in gtEntry.Members)
                     excludedIds.Add(m.InternalId);
 
-            // Select additional evidence collector for this media type
             var typeCollector = GetTypeCollector(mediaType);
 
             var candidatesFound = 0;
@@ -221,6 +222,30 @@ namespace ListProtection.EntryPoints
                     continue;
                 }
 
+                // ── Top-3 cap ──────────────────────────────────────────────
+                // Count current candidates for this (playlist, member) pair.
+                var currentForMember = existing
+                    .Where(c =>
+                        c.PlaylistId == missingEntry.PlaylistId &&
+                        c.MissingMember?.InternalId == member.InternalId)
+                    .ToList();
+
+                if (currentForMember.Count >= MaxCandidatesPerMember)
+                {
+                    // Only displace the lowest-scoring existing candidate if the
+                    // new score beats it — otherwise discard the new candidate.
+                    var lowestExisting = currentForMember
+                        .OrderBy(c => c.Score)
+                        .First();
+
+                    if (score <= lowestExisting.Score)
+                        continue;
+
+                    // Evict the lowest scorer to make room
+                    existing.Remove(lowestExisting);
+                    changed = true;
+                }
+
                 existing.Add(new CandidateEntry
                 {
                     PlaylistId = missingEntry.PlaylistId,
@@ -256,7 +281,6 @@ namespace ListProtection.EntryPoints
             ILibraryManager libraryManager,
             ILogger logger)
         {
-            // Supported types. Extend here when new media types are added.
             string embyType;
             switch (mediaType)
             {
@@ -290,7 +314,6 @@ namespace ListProtection.EntryPoints
             switch (mediaType)
             {
                 case "Audio": return AudioCollector;
-                // Future: case "Episode": return EpisodeCollector;
                 default: return null;
             }
         }
@@ -324,7 +347,8 @@ namespace ListProtection.EntryPoints
                         var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
                         payloadLines.Add(
                             posPrefix +
-                            (c.CandidateName ?? "(unnamed)") +
+                            (c.MissingMember?.Name ?? "(unnamed)") +
+                            " → " + (c.CandidateName ?? "(unnamed)") +
                             " | score=" + c.Score +
                             " | " + (c.CandidatePath ?? string.Empty));
                     }

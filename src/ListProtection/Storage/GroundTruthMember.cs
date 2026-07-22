@@ -1,4 +1,6 @@
-﻿namespace ListProtection.Storage
+﻿using System.Collections.Generic;
+
+namespace ListProtection.Storage
 {
     public class GroundTruthMember
     {
@@ -44,8 +46,21 @@
 
         /// <summary>
         /// item.AlbumArtists[0] at capture time. Null if not an Audio item or absent.
+        /// Used for AlbumArtistExact signal (corroborating, not gate).
         /// </summary>
         public string AlbumArtist { get; set; }
+
+        /// <summary>
+        /// item.Artists at capture time. Null/empty if not an Audio item or tag absent.
+        ///
+        /// The auto-repair gate (AudioAutoRepairEligibility) requires that Artists[0]
+        /// appears as an exact element in the candidate's Artists list.
+        /// The ArtistExact scoring signal fires on the same condition.
+        ///
+        /// Stored as a list because a track can have multiple contributing artists.
+        /// The primary artist (Artists[0]) is the one used for gate and scoring.
+        /// </summary>
+        public List<string> Artists { get; set; }
 
         /// <summary>
         /// item.IndexNumber (track number) at capture time. Null if absent.

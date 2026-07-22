@@ -1,5 +1,7 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Scoring;
+using ListProtection.Storage;
 using ListProtection.UI.MissingMembers;
+using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
@@ -15,26 +17,37 @@ namespace ListProtection.Services
     /// Runs automatic repairs after candidate discovery.
     ///
     /// Called by MissingMemberDetectionService after CandidateDiscoverer.RunDiscovery
-    /// completes — only when AutoRepairEnabled is true in ConfigStore.
+    /// completes — only when AutoRepairEnabled is true in PluginConfiguration.
     ///
-    /// For each missing member in the target playlist, picks the highest-scoring
-    /// candidate that meets or exceeds AutoRepairThreshold and calls
-    /// PlaylistRepairService.ExecuteRepairs with that candidate marked Repair=true.
+    /// For each missing member, walks candidates in descending score order and picks
+    /// the first that passes the IAutoRepairEligibility gate for its media type.
     ///
-    /// AutoRepairMaxPerRun caps the total number of repairs in a single pass.
-    /// Set to 0 in config to remove the cap.
+    /// Audio gate (AudioAutoRepairEligibility):
+    ///   All three must match: Name (exact) + Artist (exact membership) + Album (exact).
+    ///   Score selects the best candidate when multiple pass the gate.
+    ///
+    /// Other media types: no IAutoRepairEligibility implementation is registered —
+    /// auto-repair does not fire for them. Register a new implementation in
+    /// _eligibilityGates below to extend support.
+    ///
+    /// AutoRepairMaxPerRun caps repairs per pass (0 = unlimited).
     ///
     /// Static — all state lives in stores via ListProtectionPlugin.Instance.
-    /// This mirrors the CandidateDiscoverer pattern exactly.
     /// </summary>
     internal static class AutoRepairer
     {
-        /// <summary>
-        /// Entry point called after candidate discovery completes.
-        ///
-        /// targetPlaylistIdN — if non-null, only processes that playlist.
-        ///                     If null, processes all playlists with missing members.
-        /// </summary>
+        // ── Eligibility gates ──────────────────────────────────────────────
+        // Keyed by MediaType. Add new implementations here when supporting
+        // additional media types — no other code changes required.
+
+        private static readonly Dictionary<string, IAutoRepairEligibility> _eligibilityGates =
+            new Dictionary<string, IAutoRepairEligibility>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "Audio", new AudioAutoRepairEligibility() },
+                // { "Episode", new EpisodeAutoRepairEligibility() },
+                // { "Movie",   new MovieAutoRepairEligibility()   },
+            };
+
         internal static async Task RunAutoRepair(
             string targetPlaylistIdN,
             ILibraryManager libraryManager,
@@ -55,7 +68,6 @@ namespace ListProtection.Services
                     return;
                 }
 
-                // Read config — bail early if auto-repair is disabled
                 var config = plugin.Configuration;
                 if (config == null || !config.AutoRepairEnabled)
                 {
@@ -63,12 +75,10 @@ namespace ListProtection.Services
                     return;
                 }
 
-                var threshold = config.AutoRepairThreshold;
                 var maxPerRun = config.AutoRepairMaxPerRun;
-
                 logger.Info(
-                    "[AutoRepairer] Config | threshold={0} | maxPerRun={1}",
-                    threshold, maxPerRun == 0 ? "unlimited" : maxPerRun.ToString());
+                    "[AutoRepairer] Config | maxPerRun={0}",
+                    maxPerRun == 0 ? "unlimited" : maxPerRun.ToString());
 
                 var missing = plugin.MissingMembersStore.Load();
                 var candidates = plugin.CandidateStore.Load();
@@ -79,7 +89,6 @@ namespace ListProtection.Services
                     return;
                 }
 
-                // Filter to target playlist if specified
                 var relevantMissing = missing
                     .Where(m => targetPlaylistIdN == null || m.PlaylistId == targetPlaylistIdN)
                     .Where(m => m.Member != null)
@@ -91,7 +100,10 @@ namespace ListProtection.Services
                     return;
                 }
 
-                // Build repair rows — one per missing member that has a qualifying candidate
+                // Resolve all candidate InternalIds to live BaseItem instances in one
+                // library query — the eligibility gate needs live metadata.
+                var itemLookup = BuildCandidateItemLookup(candidates, libraryManager, logger);
+
                 var repairService = new PlaylistRepairService(
                     plugin.MissingMembersStore,
                     plugin.GroundTruthStore,
@@ -114,27 +126,67 @@ namespace ListProtection.Services
                         break;
                     }
 
-                    var best = candidates
-                        .Where(c =>
-                            c.PlaylistId == record.PlaylistId &&
-                            c.MissingMember?.InternalId == record.Member.InternalId &&
-                            c.Score >= threshold)
-                        .OrderByDescending(c => c.Score)
-                        .FirstOrDefault();
+                    var mediaType = record.Member.MediaType ?? "Audio";
 
-                    if (best == null)
+                    if (!_eligibilityGates.TryGetValue(mediaType, out var gate))
                     {
                         logger.Info(
-                            "[AutoRepairer] No qualifying candidate for '{0}' (threshold={1}) — skipping",
-                            record.Member.Name ?? "(unnamed)", threshold);
+                            "[AutoRepairer] No eligibility gate for MediaType='{0}' — skipping '{1}'",
+                            mediaType, record.Member.Name ?? "(unnamed)");
+                        continue;
+                    }
+
+                    var memberCandidates = candidates
+                        .Where(c =>
+                            c.PlaylistId == record.PlaylistId &&
+                            c.MissingMember?.InternalId == record.Member.InternalId)
+                        .OrderByDescending(c => c.Score)
+                        .ToList();
+
+                    if (memberCandidates.Count == 0)
+                    {
+                        logger.Info(
+                            "[AutoRepairer] No candidates for '{0}' — skipping",
+                            record.Member.Name ?? "(unnamed)");
+                        continue;
+                    }
+
+                    // Walk candidates best-first, pick first that passes the gate
+                    CandidateEntry chosen = null;
+                    foreach (var candidateEntry in memberCandidates)
+                    {
+                        if (!itemLookup.TryGetValue(candidateEntry.CandidateInternalId, out var liveItem))
+                        {
+                            logger.Info(
+                                "[AutoRepairer]   Candidate InternalId={0} not found in library — skipping",
+                                candidateEntry.CandidateInternalId);
+                            continue;
+                        }
+
+                        if (gate.IsEligible(record.Member, liveItem))
+                        {
+                            chosen = candidateEntry;
+                            break;
+                        }
+
+                        logger.Info(
+                            "[AutoRepairer]   Candidate '{0}' (score={1}) did not pass eligibility gate",
+                            candidateEntry.CandidateName ?? "(unnamed)", candidateEntry.Score);
+                    }
+
+                    if (chosen == null)
+                    {
+                        logger.Info(
+                            "[AutoRepairer] No eligible candidate for '{0}' — skipping",
+                            record.Member.Name ?? "(unnamed)");
                         continue;
                     }
 
                     logger.Info(
                         "[AutoRepairer] Queuing auto-repair | member='{0}' → candidate='{1}' | score={2}",
                         record.Member.Name ?? "(unnamed)",
-                        best.CandidateName ?? "(unnamed)",
-                        best.Score);
+                        chosen.CandidateName ?? "(unnamed)",
+                        chosen.Score);
 
                     var key = record.PlaylistId + "_" + record.Member.InternalId;
 
@@ -150,12 +202,12 @@ namespace ListProtection.Services
                         {
                             new CandidateRow
                             {
-                                Key = record.PlaylistId + "_" + record.Member.InternalId + "_" + best.CandidateInternalId,
-                                CandidateName = best.CandidateName ?? "(unnamed)",
-                                CandidatePath = best.CandidatePath ?? string.Empty,
-                                Score = best.Score,
-                                Signals = string.Join(", ", best.MatchedSignals ?? new List<string>()),
-                                Repair = true
+                                Key           = key + "_" + chosen.CandidateInternalId,
+                                CandidateName = chosen.CandidateName ?? "(unnamed)",
+                                CandidatePath = chosen.CandidatePath ?? string.Empty,
+                                Score         = chosen.Score,
+                                Signals       = string.Join(", ", chosen.MatchedSignals ?? new List<string>()),
+                                Repair        = true
                             }
                         }
                     });
@@ -177,6 +229,39 @@ namespace ListProtection.Services
             {
                 logger.ErrorException("[AutoRepairer] RunAutoRepair failed", ex);
             }
+        }
+
+        private static Dictionary<long, MediaBrowser.Controller.Entities.BaseItem> BuildCandidateItemLookup(
+            List<CandidateEntry> candidates,
+            ILibraryManager libraryManager,
+            ILogger logger)
+        {
+            var lookup = new Dictionary<long, MediaBrowser.Controller.Entities.BaseItem>();
+            var uniqueIds = candidates.Select(c => c.CandidateInternalId).Distinct().ToArray();
+
+            if (uniqueIds.Length == 0) return lookup;
+
+            try
+            {
+                var items = libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    ItemIds = uniqueIds,
+                    Recursive = true
+                });
+
+                foreach (var item in items)
+                    lookup[item.InternalId] = item;
+
+                logger.Info(
+                    "[AutoRepairer] Resolved {0}/{1} candidate item(s) from library",
+                    lookup.Count, uniqueIds.Length);
+            }
+            catch (Exception ex)
+            {
+                logger.ErrorException("[AutoRepairer] Failed to resolve candidate items", ex);
+            }
+
+            return lookup;
         }
     }
 }

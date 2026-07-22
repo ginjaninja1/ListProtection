@@ -10,9 +10,8 @@ namespace ListProtection.UI.Config
     /// infrastructure. Never persisted — ConfigPageView maps between this and
     /// PluginConfiguration (the actual persistence model) on every AutoPostBack.
     ///
-    /// CaptionItem fields are presentation-only and not serialised because this
-    /// class is assigned as ContentData, not saved via any store or
-    /// SaveConfiguration().
+    /// Auto-repair is now governed by a hard semantic gate (name + artist + album)
+    /// rather than a score threshold. AutoRepairThreshold has been removed.
     /// </summary>
     public class ConfigUI : EditableOptionsBase
     {
@@ -29,19 +28,11 @@ namespace ListProtection.UI.Config
         [DisplayName("Enable Auto-Repair")]
         [Description(
             "When enabled, missing playlist members are automatically repaired after " +
-            "candidate discovery if the best candidate meets the score threshold below. " +
-            "Leave disabled until you are confident in the scoring results for your library.")]
+            "candidate discovery if the candidate passes the eligibility gate: " +
+            "track name, artist, and album must all match exactly. " +
+            "Leave disabled until you are confident in scoring results for your library.")]
         [AutoPostBack("updateconfig", nameof(AutoRepairEnabled))]
         public bool AutoRepairEnabled { get; set; } = false;
-
-        [DisplayName("Auto-Repair Score Threshold")]
-        [Description(
-            "Minimum candidate score required for an automatic repair. " +
-            "100 = FilenameStemExact signal alone. " +
-            "160 = FilenameStemExact + NameExact (very high confidence). " +
-            "20 = ParentFolderMatch only (album sibling — not recommended for auto-repair).")]
-        [AutoPostBack("updateconfig", nameof(AutoRepairThreshold))]
-        public int AutoRepairThreshold { get; set; } = 100;
 
         [DisplayName("Max Auto-Repairs Per Run")]
         [Description(

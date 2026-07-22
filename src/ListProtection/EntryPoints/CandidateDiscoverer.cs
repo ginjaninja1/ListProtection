@@ -39,13 +39,17 @@ namespace ListProtection.EntryPoints
     ///   null MediaType fall back to querying Audio (preserving prior behaviour).
     ///   When a gt.MediaType is not yet supported, discovery logs and skips.
     ///
+    /// Logging:
+    ///   Only candidates that enter or update the top-3 store are logged individually.
+    ///   Per-item scoring of the full 69k+ pool is silent to avoid log spam.
+    ///
     /// Belt-and-braces note:
     ///   PostScanCandidateTask (ILibraryPostScanTask + scheduled 04:00 daily) is the
-    ///   load-bearing safety net for the upgrade scenario (MP3 → FLAC). In that case
-    ///   the replacement item does not exist at ItemRemoved time — the event-driven
-    ///   fast path produces zero candidates. The post-scan task runs after Emby has
-    ///   fully ingested the new file and its metadata, at which point the audio-specific
-    ///   signals (Album, AlbumArtist, Duration) are available and scoring is reliable.
+    ///   load-bearing safety net for the folder-rename/upgrade scenario. The event-driven
+    ///   fast path is best-effort — metadata may not be settled at discovery time.
+    ///   The post-scan task runs after Emby has fully ingested new files and their
+    ///   metadata, at which point audio-specific signals (Album, AlbumArtist, Duration)
+    ///   are available and scoring is reliable.
     /// </summary>
     internal static class CandidateDiscoverer
     {
@@ -204,16 +208,16 @@ namespace ListProtection.EntryPoints
                 {
                     if (score > existingEntry.Score)
                     {
-                        logger.Info(
-                            "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score {2}→{3} | Signals=[{4}]",
-                            item.Name, item.InternalId, existingEntry.Score, score,
-                            string.Join(", ", signals));
-
                         existingEntry.Score = score;
                         existingEntry.MatchedSignals = signals;
                         existingEntry.LastScoredAt = DateTime.UtcNow;
                         changed = true;
                         candidatesUpdated++;
+
+                        logger.Info(
+                            "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score {2}→{3} | Signals=[{4}]",
+                            item.Name, item.InternalId, existingEntry.Score, score,
+                            string.Join(", ", signals));
                     }
                     else
                     {
@@ -223,7 +227,6 @@ namespace ListProtection.EntryPoints
                 }
 
                 // ── Top-3 cap ──────────────────────────────────────────────
-                // Count current candidates for this (playlist, member) pair.
                 var currentForMember = existing
                     .Where(c =>
                         c.PlaylistId == missingEntry.PlaylistId &&
@@ -232,8 +235,6 @@ namespace ListProtection.EntryPoints
 
                 if (currentForMember.Count >= MaxCandidatesPerMember)
                 {
-                    // Only displace the lowest-scoring existing candidate if the
-                    // new score beats it — otherwise discard the new candidate.
                     var lowestExisting = currentForMember
                         .OrderBy(c => c.Score)
                         .First();
@@ -241,12 +242,12 @@ namespace ListProtection.EntryPoints
                     if (score <= lowestExisting.Score)
                         continue;
 
-                    // Evict the lowest scorer to make room
+                    // Evict the lowest scorer to make room — no log, just a displacement
                     existing.Remove(lowestExisting);
                     changed = true;
                 }
 
-                existing.Add(new CandidateEntry
+                var entry = new CandidateEntry
                 {
                     PlaylistId = missingEntry.PlaylistId,
                     PlaylistName = missingEntry.PlaylistName,
@@ -259,14 +260,16 @@ namespace ListProtection.EntryPoints
                     MatchedSignals = signals,
                     DiscoveredAt = DateTime.UtcNow,
                     LastScoredAt = DateTime.UtcNow
-                });
+                };
 
+                existing.Add(entry);
+                candidatesFound++;
+                changed = true;
+
+                // Only log candidates that made it into the top-3 store
                 logger.Info(
                     "[CandidateDiscoverer]   Candidate recorded: '{0}' | InternalId={1} | Score={2} | Signals=[{3}]",
                     item.Name, item.InternalId, score, string.Join(", ", signals));
-
-                candidatesFound++;
-                changed = true;
             }
 
             logger.Info(

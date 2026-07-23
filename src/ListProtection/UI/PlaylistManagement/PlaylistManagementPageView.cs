@@ -503,6 +503,9 @@ namespace ListProtection.UI.PlaylistManagement
                 }
             }
 
+            // Load candidates once outside the per-row loop
+            var allCandidates = ListProtectionPlugin.Instance.CandidateStore.Load();
+
             var rows = new List<PlaylistRow>(items.Length);
 
             foreach (var item in items)
@@ -522,20 +525,28 @@ namespace ListProtection.UI.PlaylistManagement
                     liveCountByInternalId.TryGetValue(item.InternalId, out memberCount);
                 }
 
-                var playlistMissing = missingRecords
-                    .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
-                    .ToList();
-                var missingCount = playlistMissing.Count;
-                var allCandidates = ListProtectionPlugin.Instance.CandidateStore.Load();
-                var candidateCoveredCount = 0;
-                foreach (var mr in playlistMissing)
+                // Missing and candidate counts are only meaningful for protected playlists.
+                // Unprotected playlists have no ground truth to detect against.
+                int missingCount = 0;
+                int candidateCoveredCount = 0;
+
+                if (isProtected)
                 {
-                    var hasCandidate = allCandidates.Any(c =>
-                        string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase) &&
-                        mr.Member != null &&
-                        c.MissingMember?.InternalId == mr.Member.InternalId);
-                    if (hasCandidate) candidateCoveredCount++;
+                    var playlistMissing = missingRecords
+                        .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+                    missingCount = playlistMissing.Count;
+
+                    foreach (var mr in playlistMissing)
+                    {
+                        var hasCandidate = allCandidates.Any(c =>
+                            string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase) &&
+                            mr.Member != null &&
+                            c.MissingMember?.InternalId == mr.Member.InternalId);
+                        if (hasCandidate) candidateCoveredCount++;
+                    }
                 }
+
                 var status = memberCount + "/" + missingCount + "/" + candidateCoveredCount;
 
                 var detailRows = new[]

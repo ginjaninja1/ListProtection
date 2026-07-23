@@ -3,6 +3,7 @@ using Emby.Web.GenericEdit.Elements;
 using Emby.Web.GenericEdit.Elements.DxGrid;
 using MediaBrowser.Model.Attributes;
 using System;
+using System.ComponentModel;
 
 namespace ListProtection.UI.PlaylistManagement
 {
@@ -26,9 +27,13 @@ namespace ListProtection.UI.PlaylistManagement
         public override string EditorTitle => "Managed Playlists";
         public override string EditorDescription => "Toggle protection on a playlist to track and repair its membership.";
 
+
+        public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");
+
         [GridDataSource(nameof(PlaylistRows))]
         public DxDataGrid PlaylistGrid { get; set; }
 
+        [Browsable(false)]
         public PlaylistRow[] PlaylistRows { get; set; } = Array.Empty<PlaylistRow>();
 
         public static PlaylistManagementUI Build(PlaylistRow[] rows)

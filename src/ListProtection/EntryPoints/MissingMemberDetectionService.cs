@@ -31,22 +31,23 @@ namespace ListProtection.EntryPoints
     ///      Proven: folder rename probe 2026-07-18.
     ///
     ///   3. ItemAdded (Type=Folder)
-    ///      Fires when a new folder appears — including the original folder
-    ///      being restored, or a replacement folder arriving. We check whether
-    ///      any missing member's stored path starts with the added folder's path.
-    ///      If so, the added folder is a candidate source and we queue discovery
-    ///      keyed on the folder's parent so it drains after the artist-level
-    ///      RefreshCompleted (by which point FFProbe has settled all metadata).
-    ///      This catches the case where the replacement folder differs from the
-    ///      removed folder — e.g. mp3 folder removed, original flac folder
-    ///      restored — where path 2 above never fires because GT members live
-    ///      under the restored path, not the removed one.
-    ///      Proven: folder restore log 2026-07-22.
+    ///      Fires when a new folder appears. We check whether the added folder
+    ///      shares the same PARENT directory as any missing member's stored path.
+    ///      Matching on parent (rather than path prefix) catches replacement
+    ///      folders with different names from the original — e.g. original
+    ///      "[2009] Bomb in a Birdcage" replaced by "[2009] Bomb in a birdcage change".
+    ///      If a match is found, we queue discovery keyed on the shared parent
+    ///      so it drains after the artist-level RefreshCompleted fires (by which
+    ///      point FFProbe has settled all metadata).
+    ///      Proven: different-name folder replacement log 2026-07-22.
     ///
-    ///   4. RefreshCompleted (Type=Folder)
-    ///      Drains _pendingCandidateDiscovery after the artist-level refresh
-    ///      completes, by which point all child track metadata is settled.
-    ///      Proven: folder rename probe 2026-07-18.
+    ///   4. RefreshCompleted (Type=Folder / MusicArtist)
+    ///      Drains _pendingCandidateDiscovery when the refreshed item's path
+    ///      is the queued key or a true ancestor of it (refreshedPath is a
+    ///      prefix of key). Sibling album folders are intentionally excluded —
+    ///      only the artist-level folder (or higher) triggers drainage so that
+    ///      all child track metadata is settled before discovery runs.
+    ///      Proven: folder rename probe 2026-07-18; drain-too-early fix 2026-07-22.
     ///
     /// Belt-and-braces sweeps:
     ///   PostScanDetectionTask  — runs detection after every library scan + daily 03:00
@@ -244,21 +245,27 @@ namespace ListProtection.EntryPoints
 
         /// <summary>
         /// PROVEN path — folder added/restored.
-        /// Check whether any missing member's stored path starts with the added
-        /// folder's path. If so, the folder is a candidate source — queue
-        /// discovery keyed on its parent so it drains after the artist-level
-        /// RefreshCompleted, by which point FFProbe has settled all metadata.
-        ///
-        /// This catches the restore scenario: mp3 replacement folder removed,
-        /// original flac folder restored — path 2 (HandleFolderRemoved) never
-        /// fires because GT members live under the restored path, not the
-        /// removed one.
+        /// Matches when the added folder's PARENT directory equals the parent
+        /// directory of any missing member's stored path. This handles both:
+        ///   - Same-name restore: added folder path prefix matches GT member path
+        ///     (parent match is a superset of this)
+        ///   - Different-name replacement: original "[2009] Bomb in a Birdcage"
+        ///     replaced by "[2009] Bomb in a birdcage change" — prefix match would
+        ///     fail, but parent match succeeds because both sit under the same
+        ///     artist folder.
+        /// Discovery is queued on the shared parent (the artist folder) so it
+        /// drains after the artist-level RefreshCompleted, by which point FFProbe
+        /// has settled all child track metadata.
+        /// Proven: different-name folder replacement log 2026-07-22.
         /// </summary>
         private void HandleFolderAdded(string addedFolderPath, ListProtectionPlugin plugin)
         {
             var normalised = addedFolderPath.TrimEnd('\\', '/');
-            var missing = plugin.MissingMembersStore.Load();
+            var addedParent = Path.GetDirectoryName(normalised);
 
+            if (string.IsNullOrEmpty(addedParent)) return;
+
+            var missing = plugin.MissingMembersStore.Load();
             if (missing == null || missing.Count == 0) return;
 
             var affectedPlaylists = new List<string>();
@@ -267,8 +274,9 @@ namespace ListProtection.EntryPoints
             {
                 if (string.IsNullOrEmpty(entry.Member?.Path)) continue;
 
-                if (entry.Member.Path.StartsWith(normalised + "\\", StringComparison.OrdinalIgnoreCase) ||
-                    entry.Member.Path.StartsWith(normalised + "/", StringComparison.OrdinalIgnoreCase))
+                var memberParent = Path.GetDirectoryName(entry.Member.Path.TrimEnd('\\', '/'));
+
+                if (string.Equals(addedParent, memberParent, StringComparison.OrdinalIgnoreCase))
                 {
                     if (!affectedPlaylists.Contains(entry.PlaylistId))
                         affectedPlaylists.Add(entry.PlaylistId);
@@ -278,13 +286,11 @@ namespace ListProtection.EntryPoints
             if (affectedPlaylists.Count == 0) return;
 
             _logger.Info(
-                "[MissingMemberDetectionService] Folder added '{0}' matches missing member paths — queuing discovery for {1} playlist(s)",
+                "[MissingMemberDetectionService] Folder added '{0}' — parent matches missing member paths — queuing discovery for {1} playlist(s)",
                 addedFolderPath, affectedPlaylists.Count);
 
-            var discoveryKey = Path.GetDirectoryName(normalised) ?? normalised;
-
             foreach (var playlistId in affectedPlaylists)
-                QueueCandidateDiscovery(discoveryKey, playlistId);
+                QueueCandidateDiscovery(addedParent, playlistId);
         }
 
         // ── Queue helper ───────────────────────────────────────────────────
@@ -304,8 +310,20 @@ namespace ListProtection.EntryPoints
         // ── RefreshCompleted ───────────────────────────────────────────────
 
         /// <summary>
-        /// Drains _pendingCandidateDiscovery after the artist-level refresh
-        /// completes, by which point all child track metadata is settled in the DB.
+        /// Drains _pendingCandidateDiscovery when the refreshed item's path IS
+        /// the queued key or is a true ancestor of it (i.e. refreshedPath is a
+        /// prefix of key — the refreshed item contains the keyed folder).
+        ///
+        /// Crucially: we do NOT drain when key is a prefix of refreshedPath
+        /// (which would mean the refreshed item is a CHILD or SIBLING of the
+        /// keyed folder). This prevents sibling album folders from draining the
+        /// queue before the artist-level RefreshCompleted fires.
+        ///
+        /// Example (fix for drain-too-early bug, 2026-07-22):
+        ///   key = "\\x99\music\A Fine Frenzy" (artist folder, the parent)
+        ///   refreshedPath = "\\x99\music\A Fine Frenzy\[2007] One Cell in the Sea" → NO DRAIN (child)
+        ///   refreshedPath = "\\x99\music\A Fine Frenzy" → DRAIN (exact match / ancestor)
+        ///   refreshedPath = "\\x99\music" → DRAIN (true ancestor)
         /// </summary>
         private void OnRefreshCompleted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
@@ -330,11 +348,14 @@ namespace ListProtection.EntryPoints
                     {
                         var key = kvp.Key;
                         var isAudioKey = key.StartsWith("__audio__", StringComparison.Ordinal);
-                        var isAncestor = !isAudioKey && (
-                            refreshedPath.StartsWith(key, StringComparison.OrdinalIgnoreCase) ||
-                            key.StartsWith(refreshedPath, StringComparison.OrdinalIgnoreCase));
 
-                        if (isAudioKey || isAncestor)
+                        // For path-keyed entries: drain only when the refreshed item IS
+                        // the keyed path or is a true ancestor (refreshedPath is a prefix
+                        // of key). Never drain on a child/sibling RefreshCompleted.
+                        var isAncestorOrSelf = !isAudioKey &&
+                            key.StartsWith(refreshedPath, StringComparison.OrdinalIgnoreCase);
+
+                        if (isAudioKey || isAncestorOrSelf)
                         {
                             if (playlistsToDiscover == null)
                                 playlistsToDiscover = new List<string>();

@@ -94,6 +94,7 @@ namespace ListProtection.EntryPoints
         {
             _libraryManager.ItemRemoved += OnItemRemoved;
             _libraryManager.ItemAdded += OnItemAdded;
+            _libraryManager.ItemUpdated += OnItemUpdated;
             _providerManager.RefreshCompleted += OnRefreshCompleted;
 
             _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + RefreshCompleted active");
@@ -242,7 +243,67 @@ namespace ListProtection.EntryPoints
                 _logger.ErrorException("[MissingMemberDetectionService] OnItemAdded failed", ex);
             }
         }
+        private void OnItemUpdated(object sender, ItemChangeEventArgs e)
+        {
+            try
+            {
+                var item = e?.Item;
+                if (item == null) return;
 
+                if (item.GetType().Name != "Audio") return;
+
+                if (!IsAutoDiscoverEnabled()) return;
+
+                var plugin = ListProtectionPlugin.Instance;
+                if (plugin == null) return;
+
+                var missing = plugin.MissingMembersStore.Load();
+                if (missing == null || missing.Count == 0) return;
+
+                if (string.IsNullOrEmpty(item.Path)) return;
+
+                var itemParent = System.IO.Path.GetDirectoryName(item.Path.TrimEnd('\\', '/'));
+                if (string.IsNullOrEmpty(itemParent)) return;
+
+                var itemGrandparent = System.IO.Path.GetDirectoryName(itemParent);
+                if (string.IsNullOrEmpty(itemGrandparent)) return;
+
+                var affectedPlaylists = new List<string>();
+
+                foreach (var entry in missing)
+                {
+                    if (string.IsNullOrEmpty(entry.Member?.Path)) continue;
+
+                    var memberParent = System.IO.Path.GetDirectoryName(
+                        entry.Member.Path.TrimEnd('\\', '/'));
+                    if (string.IsNullOrEmpty(memberParent)) continue;
+
+                    var memberGrandparent = System.IO.Path.GetDirectoryName(memberParent);
+                    if (string.IsNullOrEmpty(memberGrandparent)) continue;
+
+                    if (!string.Equals(itemGrandparent, memberGrandparent,
+                            StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (!affectedPlaylists.Contains(entry.PlaylistId))
+                        affectedPlaylists.Add(entry.PlaylistId);
+                }
+
+                if (affectedPlaylists.Count == 0) return;
+
+                _logger.Info(
+                    "[MissingMemberDetectionService] ItemUpdated '{0}' — grandparent matches missing member path(s) — queuing discovery for {1} playlist(s)",
+                    item.Name ?? "(null)", affectedPlaylists.Count);
+
+                foreach (var playlistId in affectedPlaylists)
+                    QueueCandidateDiscovery(itemGrandparent, playlistId);
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException(
+                    "[MissingMemberDetectionService] OnItemUpdated failed", ex);
+            }
+        }
         /// <summary>
         /// PROVEN path — folder added/restored.
         /// Matches when the added folder's PARENT directory equals the parent

@@ -28,9 +28,14 @@
 		<Compile Remove="Services\SimulationService.cs" />
 		<Compile Remove="Storage\BasicsOptionsStore.cs" />
 		<Compile Remove="Tasks\CandidateDiscoveryProbeTask.cs" />
+		<Compile Remove="Tasks\CandidateDiscoveryTask.cs" />
 		<Compile Remove="Tasks\CandidateRefreshTask.cs" />
+		<Compile Remove="Tasks\CaptureOrderProbeTask.cs" />
+		<Compile Remove="Tasks\DetectMissingMembersTask.cs" />
 		<Compile Remove="Tasks\PlaylistRecreationProbeTask.cs" />
 		<Compile Remove="EntryPoints\ScanAndAddEventProbe.cs" />
+		<Compile Remove="Tasks\PostScanCandidateTask.cs" />
+		<Compile Remove="Tasks\PostScanDetectTask.cs" />
 	</ItemGroup>
 	<ItemGroup>
 		<None Remove="Handover.md" />

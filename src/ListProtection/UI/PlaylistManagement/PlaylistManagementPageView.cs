@@ -270,6 +270,11 @@ namespace ListProtection.UI.PlaylistManagement
 
                 _store.Save(incomingProtectedIds);
 
+                // Purge stale missing/candidate records for newly-protected playlists
+                // before capturing GT — prevents phantom entries from a previous protection cycle.
+                if (beingProtected.Length > 0)
+                    PurgeStaleDetectionData(beingProtected);
+
                 // Capture GT first — Protect event payload uses the captured members
                 ReconcileGroundTruth(incomingProtectedIds);
 
@@ -617,6 +622,39 @@ namespace ListProtection.UI.PlaylistManagement
             }
         }
 
+        private void PurgeStaleDetectionData(string[] playlistIds)
+        {
+            try
+            {
+                var purgeSet = new HashSet<string>(playlistIds, StringComparer.OrdinalIgnoreCase);
+
+                var missing = ListProtectionPlugin.Instance.MissingMembersStore.Load();
+                var beforeMissing = missing.Count;
+                missing.RemoveAll(r => purgeSet.Contains(r.PlaylistId));
+                if (missing.Count != beforeMissing)
+                {
+                    ListProtectionPlugin.Instance.MissingMembersStore.Save(missing);
+                    _logger.Info(
+                        "[PlaylistManagementPageView] PurgeStaleDetectionData — removed {0} stale missing record(s)",
+                        beforeMissing - missing.Count);
+                }
+
+                var candidates = ListProtectionPlugin.Instance.CandidateStore.Load();
+                var beforeCandidates = candidates.Count;
+                candidates.RemoveAll(c => purgeSet.Contains(c.PlaylistId));
+                if (candidates.Count != beforeCandidates)
+                {
+                    ListProtectionPlugin.Instance.CandidateStore.Save(candidates);
+                    _logger.Info(
+                        "[PlaylistManagementPageView] PurgeStaleDetectionData — removed {0} stale candidate record(s)",
+                        beforeCandidates - candidates.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[PlaylistManagementPageView] PurgeStaleDetectionData failed", ex);
+            }
+        }
         private CaptureResult CaptureMembers(string playlistIdN)
         {
             try

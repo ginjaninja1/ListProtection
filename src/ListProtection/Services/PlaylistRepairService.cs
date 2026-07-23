@@ -264,14 +264,34 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    // Step 5 — read back and update GT.
-                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
-                    // ── CHANGED: use GroundTruthMemberFactory for all fields ──
-                    var rebuiltMembers = activePlaylist.GetItemList(new InternalItemsQuery());
-
-                    var updatedMembers = new List<GroundTruthMember>(rebuiltMembers.Length);
-                    foreach (var m in rebuiltMembers)
-                        updatedMembers.Add(GroundTruthMemberFactory.FromItem(m));
+                    // Step 5 — update GT by transforming the existing GT entry.
+                    // GT is the authority — never derive it from a live Emby readback,
+                    // which is subject to stale entity state, timing, and partial flushes.
+                    // Substitute candidate members for their repaired slots; all other
+                    // members carry forward unchanged. Member count must equal GT member count.
+                    var updatedMembers = new List<GroundTruthMember>(oldGtEntry.Members.Count);
+                    foreach (var gtMember in oldGtEntry.Members)
+                    {
+                        if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                        {
+                            // Resolve the candidate to a live item to get fresh metadata
+                            var liveCandidate = _libraryManager.GetItemById(candidateId);
+                            updatedMembers.Add(liveCandidate != null
+                                ? GroundTruthMemberFactory.FromItem(liveCandidate)
+                                : new GroundTruthMember
+                                {
+                                    InternalId = candidateId,
+                                    Name = gtMember.Name,
+                                    Path = gtMember.Path,
+                                    MediaType = gtMember.MediaType
+                                });
+                        }
+                        else
+                        {
+                            // Member was not part of this repair batch — carry forward as-is
+                            updatedMembers.Add(gtMember);
+                        }
+                    }
 
                     groundTruth[activePlaylistId] = new GroundTruthEntry
                     {

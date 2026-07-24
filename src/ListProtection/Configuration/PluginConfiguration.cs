@@ -9,7 +9,8 @@ namespace ListProtection.Configuration
     ///
     /// Auto-repair eligibility for Audio is governed by a hard semantic gate
     /// (AudioAutoRepairEligibility: name + artist + album must all match).
-    /// AutoRepairThreshold has been removed — the gate either passes or it doesn't.
+    /// AutoRepairThreshold and AutoRepairMaxPerRun have been removed — the gate
+    /// either passes or it doesn't, and there is no reason to artificially cap runs.
     /// </summary>
     public class PluginConfiguration : BasePluginConfiguration
     {
@@ -18,11 +19,6 @@ namespace ListProtection.Configuration
         /// Defaults to false — enable only once you have validated scoring results.
         /// </summary>
         public bool AutoRepairEnabled { get; set; } = false;
-
-        /// <summary>
-        /// Safety cap on repairs per discovery run. 0 = no limit. Default: 10.
-        /// </summary>
-        public int AutoRepairMaxPerRun { get; set; } = 10;
 
         /// <summary>
         /// When true, discovery runs automatically after detection events.

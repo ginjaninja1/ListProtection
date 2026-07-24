@@ -249,6 +249,10 @@ namespace ListProtection.UI.PlaylistManagement
                                     capturedName, capturedId);
                             }
 
+                            // Purge any vestigial missing-member and candidate records
+                            // for this playlist — they have no meaning once unprotected.
+                            PurgeStaleDetectionData(new[] { capturedId });
+
                             ReconcileGroundTruth(currentIds);
 
                             _logger.Info(

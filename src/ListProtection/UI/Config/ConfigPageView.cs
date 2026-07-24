@@ -27,7 +27,6 @@ namespace ListProtection.UI.Config
                 var config = plugin.Configuration;
 
                 config.AutoRepairEnabled = Config.AutoRepairEnabled;
-                config.AutoRepairMaxPerRun = Config.AutoRepairMaxPerRun;
                 config.AutoDiscoverCandidates = Config.AutoDiscoverCandidates;
 
                 plugin.SaveConfiguration();
@@ -39,7 +38,6 @@ namespace ListProtection.UI.Config
         private static ConfigUI BuildUI(PluginConfiguration config) => new ConfigUI
         {
             AutoRepairEnabled = config.AutoRepairEnabled,
-            AutoRepairMaxPerRun = config.AutoRepairMaxPerRun,
             AutoDiscoverCandidates = config.AutoDiscoverCandidates
         };
     }

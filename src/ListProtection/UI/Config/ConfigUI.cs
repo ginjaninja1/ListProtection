@@ -10,8 +10,8 @@ namespace ListProtection.UI.Config
     /// infrastructure. Never persisted — ConfigPageView maps between this and
     /// PluginConfiguration (the actual persistence model) on every AutoPostBack.
     ///
-    /// Auto-repair is now governed by a hard semantic gate (name + artist + album)
-    /// rather than a score threshold. AutoRepairThreshold has been removed.
+    /// Auto-repair is governed by a hard semantic gate (name + artist + album).
+    /// AutoRepairThreshold and AutoRepairMaxPerRun have been removed.
     /// </summary>
     public class ConfigUI : EditableOptionsBase
     {
@@ -33,15 +33,6 @@ namespace ListProtection.UI.Config
             "Leave disabled until you are confident in scoring results for your library.")]
         [AutoPostBack("updateconfig", nameof(AutoRepairEnabled))]
         public bool AutoRepairEnabled { get; set; } = false;
-
-        [DisplayName("Max Auto-Repairs Per Run")]
-        [Description(
-            "Safety cap on the number of members repaired in a single discovery run. " +
-            "Prevents a large folder rename from generating unbounded write load during " +
-            "an active library scan. Deferred repairs are picked up in the next cycle. " +
-            "Set to 0 for no limit.")]
-        [AutoPostBack("updateconfig", nameof(AutoRepairMaxPerRun))]
-        public int AutoRepairMaxPerRun { get; set; } = 10;
 
         // ── Candidate Discovery ────────────────────────────────────────────
 

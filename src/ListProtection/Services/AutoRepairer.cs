@@ -30,8 +30,6 @@ namespace ListProtection.Services
     /// auto-repair does not fire for them. Register a new implementation in
     /// _eligibilityGates below to extend support.
     ///
-    /// AutoRepairMaxPerRun caps repairs per pass (0 = unlimited).
-    ///
     /// Static — all state lives in stores via ListProtectionPlugin.Instance.
     /// </summary>
     internal static class AutoRepairer
@@ -75,11 +73,6 @@ namespace ListProtection.Services
                     return;
                 }
 
-                var maxPerRun = config.AutoRepairMaxPerRun;
-                logger.Info(
-                    "[AutoRepairer] Config | maxPerRun={0}",
-                    maxPerRun == 0 ? "unlimited" : maxPerRun.ToString());
-
                 var missing = plugin.MissingMembersStore.Load();
                 var candidates = plugin.CandidateStore.Load();
 
@@ -114,18 +107,9 @@ namespace ListProtection.Services
                     logger);
 
                 var repairRows = new List<MissingMemberRow>();
-                var repairCount = 0;
 
                 foreach (var record in relevantMissing)
                 {
-                    if (maxPerRun > 0 && repairCount >= maxPerRun)
-                    {
-                        logger.Info(
-                            "[AutoRepairer] Reached AutoRepairMaxPerRun limit ({0}) — stopping",
-                            maxPerRun);
-                        break;
-                    }
-
                     var mediaType = record.Member.MediaType ?? "Audio";
 
                     if (!_eligibilityGates.TryGetValue(mediaType, out var gate))
@@ -211,8 +195,6 @@ namespace ListProtection.Services
                             }
                         }
                     });
-
-                    repairCount++;
                 }
 
                 if (repairRows.Count == 0)
@@ -231,12 +213,12 @@ namespace ListProtection.Services
             }
         }
 
-        private static Dictionary<long, MediaBrowser.Controller.Entities.BaseItem> BuildCandidateItemLookup(
+        private static Dictionary<long, BaseItem> BuildCandidateItemLookup(
             List<CandidateEntry> candidates,
             ILibraryManager libraryManager,
             ILogger logger)
         {
-            var lookup = new Dictionary<long, MediaBrowser.Controller.Entities.BaseItem>();
+            var lookup = new Dictionary<long, BaseItem>();
             var uniqueIds = candidates.Select(c => c.CandidateInternalId).Distinct().ToArray();
 
             if (uniqueIds.Length == 0) return lookup;

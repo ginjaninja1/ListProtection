@@ -59,6 +59,7 @@ namespace ListProtection.EntryPoints
                 }
 
                 var changed = false;
+                var newlyAdded = new List<MissingMemberEntry>();
 
                 // Resolve all playlists once
                 var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery
@@ -143,19 +144,21 @@ namespace ListProtection.EntryPoints
                             continue;
                         }
 
-                        missing.Add(new MissingMemberEntry
+                        var newEntry = new MissingMemberEntry
                         {
                             PlaylistId = playlistIdN,
                             PlaylistName = entry.PlaylistName,
                             DetectedAt = DateTime.UtcNow,
                             Member = member
-                        });
+                        };
+
+                        missing.Add(newEntry);
+                        newlyAdded.Add(newEntry);
+                        changed = true;
 
                         logger.Info(
                             "[MissingMemberDetector] Recorded missing member: '{0}' | InternalId={1} | playlist='{2}' ({3})",
                             member.Name, member.InternalId, entry.PlaylistName, playlistIdN);
-
-                        changed = true;
                     }
                 }
 
@@ -167,12 +170,12 @@ namespace ListProtection.EntryPoints
 
                     logger.Info("[MissingMemberDetector] Detection complete — store updated");
 
-                    // Write MissingDetected events grouped by playlist.
-                    // Payload lines include [POS X] prefix using the member's GT position.
+                    // Write one MissingDetected event per playlist containing only
+                    // the members newly detected in THIS run (not the full store).
                     try
                     {
                         var byPlaylist = new Dictionary<string, List<MissingMemberEntry>>(StringComparer.OrdinalIgnoreCase);
-                        foreach (var record in missing)
+                        foreach (var record in newlyAdded)
                         {
                             if (!byPlaylist.TryGetValue(record.PlaylistId, out var list))
                                 byPlaylist[record.PlaylistId] = list = new List<MissingMemberEntry>();
@@ -181,7 +184,6 @@ namespace ListProtection.EntryPoints
 
                         foreach (var evKvp in byPlaylist)
                         {
-                            // Get the GT for this playlist to resolve positions
                             groundTruth.TryGetValue(evKvp.Key, out var gtEntry);
 
                             var payloadLines = new List<string>();

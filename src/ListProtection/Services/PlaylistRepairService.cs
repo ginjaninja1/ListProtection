@@ -177,10 +177,12 @@ namespace ListProtection.Services
                     //
                     // Approach: delete every current member then re-add all members
                     // in the correct GT order (substituting candidates for missing slots).
-                    // This is bulletproof — no MoveItem, no index drift, no race with
-                    // PlaylistMaintenanceService between add and move steps.
+                    // This is bulletproof — no MoveItem, no index drift.
                     // skipDuplicates=false because GT is the authority — if GT has
                     // duplicates, the playlist should too.
+                    //
+                    // Suppression: PlaylistMaintenanceService is suppressed for the entire
+                    // remove→add window so it cannot touch GT. Repair owns the GT update.
                     activePlaylistId = oldPlaylistId;
                     activeInternalId = existingPlaylist.InternalId;
                     var activePlaylist = existingPlaylist as MediaBrowser.Controller.Playlists.Playlist;
@@ -207,61 +209,71 @@ namespace ListProtection.Services
                         "[PlaylistRepairService] Removing {0} current member(s) from '{1}'",
                         currentEntryIds.Length, playlistName);
 
-                    // Step 2 — remove all current members
-                    if (currentEntryIds.Length > 0)
+                    // Suppress PlaylistMaintenanceService for the entire remove→add cycle.
+                    // Cleared in finally to guarantee release even if an exception occurs.
+                    plugin.RepairSuppressedPlaylists.TryAdd(activeInternalId, 0);
+                    try
                     {
+                        // Step 2 — remove all current members
+                        if (currentEntryIds.Length > 0)
+                        {
+                            try
+                            {
+                                await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
+                                _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, playlistName);
+                                continue;
+                            }
+                        }
+
+                        // Step 3 — build desired order from GT, substituting candidates for missing slots
+                        var desiredInternalIds = new List<long>();
+                        if (oldGtEntry?.Members != null)
+                        {
+                            foreach (var gtMember in oldGtEntry.Members)
+                            {
+                                if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                                {
+                                    desiredInternalIds.Add(candidateId);
+                                    _logger.Info(
+                                        "[PlaylistRepairService] Slot {0} ('{1}') → candidate InternalId={2}",
+                                        desiredInternalIds.Count - 1, gtMember.Name, candidateId);
+                                }
+                                else if (!repairedMissingIds.Contains(gtMember.InternalId))
+                                {
+                                    desiredInternalIds.Add(gtMember.InternalId);
+                                }
+                            }
+                        }
+
+                        _logger.Info(
+                            "[PlaylistRepairService] Re-adding {0} member(s) to '{1}' in GT order",
+                            desiredInternalIds.Count, playlistName);
+
+                        // Step 4 — add all in desired order, skipDuplicates=false (GT is authority)
                         try
                         {
-                            await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
-                            _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
+                            await _playlistManager.AddToPlaylist(
+                                activePlaylist,
+                                desiredInternalIds.ToArray(),
+                                skipDuplicates: false,
+                                user: user,
+                                cancellationToken: System.Threading.CancellationToken.None);
+
+                            _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
                         }
                         catch (Exception ex)
                         {
-                            _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, playlistName);
+                            _logger.ErrorException("[PlaylistRepairService] AddToPlaylist failed for '{0}'", ex, playlistName);
                             continue;
                         }
                     }
-
-                    // Step 3 — build desired order from GT, substituting candidates for missing slots
-                    var desiredInternalIds = new List<long>();
-                    if (oldGtEntry?.Members != null)
+                    finally
                     {
-                        foreach (var gtMember in oldGtEntry.Members)
-                        {
-                            if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
-                            {
-                                desiredInternalIds.Add(candidateId);
-                                _logger.Info(
-                                    "[PlaylistRepairService] Slot {0} ('{1}') → candidate InternalId={2}",
-                                    desiredInternalIds.Count - 1, gtMember.Name, candidateId);
-                            }
-                            else if (!repairedMissingIds.Contains(gtMember.InternalId))
-                            {
-                                desiredInternalIds.Add(gtMember.InternalId);
-                            }
-                        }
-                    }
-
-                    _logger.Info(
-                        "[PlaylistRepairService] Re-adding {0} member(s) to '{1}' in GT order",
-                        desiredInternalIds.Count, playlistName);
-
-                    // Step 4 — add all in desired order, skipDuplicates=false (GT is authority)
-                    try
-                    {
-                        await _playlistManager.AddToPlaylist(
-                            activePlaylist,
-                            desiredInternalIds.ToArray(),
-                            skipDuplicates: false,
-                            user: user,
-                            cancellationToken: System.Threading.CancellationToken.None);
-
-                        _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.ErrorException("[PlaylistRepairService] AddToPlaylist failed for '{0}'", ex, playlistName);
-                        continue;
+                        plugin.RepairSuppressedPlaylists.TryRemove(activeInternalId, out _);
                     }
 
                     // Step 5 — update GT by transforming the existing GT entry.
@@ -308,6 +320,10 @@ namespace ListProtection.Services
                 else
                 {
                     // ── Playlist is gone — CreatePlaylist ──────────────────
+                    // CreatePlaylist fires PlaylistItemsAdded synchronously during the await,
+                    // but at that point the new GuidN has not yet been registered in protectedIds,
+                    // so PlaylistMaintenanceService.IsProtected returns false and skips it naturally.
+                    // No suppression needed for this path.
                     _logger.Info(
                         "[PlaylistRepairService] Playlist GuidN={0} not found | calling CreatePlaylist with {1} item(s)",
                         oldPlaylistId, candidateItemIds.Length);
@@ -396,7 +412,6 @@ namespace ListProtection.Services
 
                     // PROVEN: Playlist.GetItemList returns members in correct playlist order.
                     // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
-                    // ── CHANGED: use GroundTruthMemberFactory for all fields ──
                     var newPlaylistEntity = resolvedItems[0] as MediaBrowser.Controller.Playlists.Playlist;
                     var capturedMembers = newPlaylistEntity != null
                         ? newPlaylistEntity.GetItemList(new InternalItemsQuery())

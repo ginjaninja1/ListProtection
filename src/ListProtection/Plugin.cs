@@ -13,6 +13,7 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI;
 using MediaBrowser.Model.Serialization;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -39,6 +40,23 @@ namespace ListProtection
         /// Use: plugin.WriterLock.Wait() / finally plugin.WriterLock.Release()
         /// </summary>
         public SemaphoreSlim WriterLock { get; } = new SemaphoreSlim(1, 1);
+
+        /// <summary>
+        /// Playlist InternalIds currently under active repair by PlaylistRepairService.
+        /// PlaylistMaintenanceService skips both add-queuing and GT removes for
+        /// suppressed playlists — repair owns the full GT update for that window.
+        ///
+        /// Suppression is set before RemoveFromPlaylist (Step 2) and cleared after
+        /// AddToPlaylist (Step 4) in a finally block, covering the entire atomic
+        /// remove→add cycle.
+        ///
+        /// Edge case acknowledged: a user-initiated remove on the exact same playlist
+        /// during the repair window will be silently ignored by PlaylistMaintenanceService
+        /// and logged as a warning. This is an acceptable trade-off given the brevity
+        /// of the repair window.
+        /// </summary>
+        public readonly ConcurrentDictionary<long, byte> RepairSuppressedPlaylists
+            = new ConcurrentDictionary<long, byte>();
 
         public PlaylistManagementStore PlaylistStore { get; }
         public GroundTruthStore GroundTruthStore { get; }

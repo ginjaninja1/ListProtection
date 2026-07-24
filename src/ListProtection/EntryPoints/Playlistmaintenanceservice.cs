@@ -27,6 +27,14 @@ namespace ListProtection.EntryPoints
     ///   PlaylistItemsRemoved fires with ListItemEntryIds[] already populated.
     ///   Match against store, remove member, save.
     ///
+    /// Repair suppression:
+    ///   When PlaylistRepairService is executing an atomic remove→add cycle it
+    ///   registers the playlist InternalId in Plugin.RepairSuppressedPlaylists.
+    ///   Both OnPlaylistItemsAdded and OnPlaylistItemsRemoved skip suppressed
+    ///   playlists entirely — repair owns the GT update for that window.
+    ///   A warning is logged if a suppressed event is dropped, so the edge case
+    ///   of a simultaneous user action during a repair is visible in logs.
+    ///
     /// PROVEN behaviours used here:
     ///   - ItemUpdated does NOT fire after a remove (no readback on remove path).
     ///   - ListItemEntryId is always 0 at PlaylistItemsAdded event time.
@@ -78,6 +86,18 @@ namespace ListProtection.EntryPoints
 
             if (!IsProtected(playlistIdN))
                 return;
+
+            // Repair owns the GT update for this add cycle — skip maintenance queuing.
+            // Warning logged so simultaneous user actions during repair are visible.
+            var plugin = ListProtectionPlugin.Instance;
+            if (plugin != null && plugin.RepairSuppressedPlaylists.ContainsKey(playlist.InternalId))
+            {
+                _logger.Warn(
+                    "[PlaylistMaintenanceService] PlaylistItemsAdded — repair in progress for '{0}' ({1}) — skipping readback queue (repair owns GT update)",
+                    playlist.Name ?? "(null)",
+                    playlistIdN);
+                return;
+            }
 
             _logger.Info(
                 "[PlaylistMaintenanceService] PlaylistItemsAdded — protected playlist '{0}' ({1}) | {2} item(s) — queuing readback",
@@ -231,6 +251,18 @@ namespace ListProtection.EntryPoints
             if (!IsProtected(playlistIdN))
                 return;
 
+            // Repair owns the GT update for this remove cycle — skip maintenance GT remove.
+            // Warning logged so simultaneous user actions during repair are visible.
+            var plugin = ListProtectionPlugin.Instance;
+            if (plugin != null && plugin.RepairSuppressedPlaylists.ContainsKey(playlist.InternalId))
+            {
+                _logger.Warn(
+                    "[PlaylistMaintenanceService] PlaylistItemsRemoved — repair in progress for '{0}' ({1}) — skipping GT remove (repair owns GT update)",
+                    playlist.Name ?? "(null)",
+                    playlistIdN);
+                return;
+            }
+
             _logger.Info(
                 "[PlaylistMaintenanceService] PlaylistItemsRemoved — protected playlist '{0}' ({1}) | {2} entry id(s) to remove",
                 playlist.Name ?? "(null)",
@@ -239,13 +271,6 @@ namespace ListProtection.EntryPoints
 
             try
             {
-                var plugin = ListProtectionPlugin.Instance;
-                if (plugin == null)
-                {
-                    _logger.Error("[PlaylistMaintenanceService] Plugin instance is null — cannot update ground truth");
-                    return;
-                }
-
                 plugin.WriterLock.Wait();
                 try
                 {

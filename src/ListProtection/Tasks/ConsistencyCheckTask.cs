@@ -38,7 +38,7 @@ namespace ListProtection.Tasks
         public string Name => "List Protection — Consistency Check";
         public string Key => "ListProtectionConsistencyCheck";
         public string Description => "Detects missing playlist members, discovers replacement candidates, and auto-repairs where eligible. Runs after every library scan and daily at 03:00.";
-        public string Category => "List Protection";
+        public string Category => "GinjaNinja Tools";
 
         public ConsistencyCheckTask(
             ILibraryManager libraryManager,

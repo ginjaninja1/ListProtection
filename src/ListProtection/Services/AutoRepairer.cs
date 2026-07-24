@@ -16,34 +16,27 @@ namespace ListProtection.Services
     /// <summary>
     /// Runs automatic repairs after candidate discovery.
     ///
-    /// Called by MissingMemberDetectionService after CandidateDiscoverer.RunDiscovery
-    /// completes — only when AutoRepairEnabled is true in PluginConfiguration.
+    /// For each missing member, builds a ranked ScoredCandidate list and passes
+    /// it to the registered IAutoRepairEligibility gate for that media type.
+    /// The gate enforces score threshold, min-distance, and semantic conditions.
     ///
-    /// For each missing member, walks candidates in descending score order and picks
-    /// the first that passes the IAutoRepairEligibility gate for its media type.
+    /// Eligibility gates are registered in _eligibilityGates below.
+    /// Adding support for a new media type requires only a new gate registration —
+    /// no other code changes.
     ///
-    /// Audio gate (AudioAutoRepairEligibility):
-    ///   All three must match: Name (exact) + Artist (exact membership) + Album (exact).
-    ///   Score selects the best candidate when multiple pass the gate.
-    ///
-    /// Other media types: no IAutoRepairEligibility implementation is registered —
-    /// auto-repair does not fire for them. Register a new implementation in
-    /// _eligibilityGates below to extend support.
-    ///
-    /// Static — all state lives in stores via ListProtectionPlugin.Instance.
+    /// Evidence collectors (for re-scoring at repair time) are constructed with
+    /// duration tolerances sourced from PluginConfiguration.
     /// </summary>
     internal static class AutoRepairer
     {
         // ── Eligibility gates ──────────────────────────────────────────────
-        // Keyed by MediaType. Add new implementations here when supporting
-        // additional media types — no other code changes required.
 
         private static readonly Dictionary<string, IAutoRepairEligibility> _eligibilityGates =
             new Dictionary<string, IAutoRepairEligibility>(StringComparer.OrdinalIgnoreCase)
             {
-                { "Audio", new AudioAutoRepairEligibility() },
-                // { "Episode", new EpisodeAutoRepairEligibility() },
-                // { "Movie",   new MovieAutoRepairEligibility()   },
+                { "Audio",   new AudioAutoRepairEligibility()   },
+                { "Episode", new EpisodeAutoRepairEligibility() },
+                { "Movie",   new MovieAutoRepairEligibility()   },
             };
 
         internal static async Task RunAutoRepair(
@@ -73,6 +66,9 @@ namespace ListProtection.Services
                     return;
                 }
 
+                var threshold = config.AutoRepairScoreThreshold;
+                var minDistance = config.AutoRepairMinCandidateDistance;
+
                 var missing = plugin.MissingMembersStore.Load();
                 var candidates = plugin.CandidateStore.Load();
 
@@ -93,8 +89,6 @@ namespace ListProtection.Services
                     return;
                 }
 
-                // Resolve all candidate InternalIds to live BaseItem instances in one
-                // library query — the eligibility gate needs live metadata.
                 var itemLookup = BuildCandidateItemLookup(candidates, libraryManager, logger);
 
                 var repairService = new PlaylistRepairService(
@@ -110,7 +104,7 @@ namespace ListProtection.Services
 
                 foreach (var record in relevantMissing)
                 {
-                    var mediaType = record.Member.MediaType ?? "Audio";
+                    var mediaType = record.Member.MediaType ?? string.Empty;
 
                     if (!_eligibilityGates.TryGetValue(mediaType, out var gate))
                     {
@@ -120,56 +114,42 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    var memberCandidates = candidates
+                    // Build ranked candidate list — only entries where live item resolved
+                    var rankedCandidates = candidates
                         .Where(c =>
                             c.PlaylistId == record.PlaylistId &&
                             c.MissingMember?.InternalId == record.Member.InternalId)
                         .OrderByDescending(c => c.Score)
+                        .Select(c => itemLookup.TryGetValue(c.CandidateInternalId, out var item)
+                            ? new ScoredCandidate(c, item)
+                            : null)
+                        .Where(sc => sc != null)
                         .ToList();
 
-                    if (memberCandidates.Count == 0)
+                    if (rankedCandidates.Count == 0)
                     {
                         logger.Info(
-                            "[AutoRepairer] No candidates for '{0}' — skipping",
+                            "[AutoRepairer] No resolvable candidates for '{0}' — skipping",
                             record.Member.Name ?? "(unnamed)");
                         continue;
                     }
 
-                    // Walk candidates best-first, pick first that passes the gate
-                    CandidateEntry chosen = null;
-                    foreach (var candidateEntry in memberCandidates)
-                    {
-                        if (!itemLookup.TryGetValue(candidateEntry.CandidateInternalId, out var liveItem))
-                        {
-                            logger.Info(
-                                "[AutoRepairer]   Candidate InternalId={0} not found in library — skipping",
-                                candidateEntry.CandidateInternalId);
-                            continue;
-                        }
-
-                        if (gate.IsEligible(record.Member, liveItem))
-                        {
-                            chosen = candidateEntry;
-                            break;
-                        }
-
-                        logger.Info(
-                            "[AutoRepairer]   Candidate '{0}' (score={1}) did not pass eligibility gate",
-                            candidateEntry.CandidateName ?? "(unnamed)", candidateEntry.Score);
-                    }
-
-                    if (chosen == null)
+                    if (!gate.IsEligible(record.Member, rankedCandidates, threshold, minDistance))
                     {
                         logger.Info(
-                            "[AutoRepairer] No eligible candidate for '{0}' — skipping",
-                            record.Member.Name ?? "(unnamed)");
+                            "[AutoRepairer] Eligibility gate rejected '{0}' (top score={1}, candidates={2})",
+                            record.Member.Name ?? "(unnamed)",
+                            rankedCandidates[0].Score,
+                            rankedCandidates.Count);
                         continue;
                     }
+
+                    var chosen = rankedCandidates[0];
 
                     logger.Info(
                         "[AutoRepairer] Queuing auto-repair | member='{0}' → candidate='{1}' | score={2}",
                         record.Member.Name ?? "(unnamed)",
-                        chosen.CandidateName ?? "(unnamed)",
+                        chosen.Entry.CandidateName ?? "(unnamed)",
                         chosen.Score);
 
                     var key = record.PlaylistId + "_" + record.Member.InternalId;
@@ -186,11 +166,11 @@ namespace ListProtection.Services
                         {
                             new CandidateRow
                             {
-                                Key           = key + "_" + chosen.CandidateInternalId,
-                                CandidateName = chosen.CandidateName ?? "(unnamed)",
-                                CandidatePath = chosen.CandidatePath ?? string.Empty,
+                                Key           = key + "_" + chosen.Entry.CandidateInternalId,
+                                CandidateName = chosen.Entry.CandidateName ?? "(unnamed)",
+                                CandidatePath = chosen.Entry.CandidatePath ?? string.Empty,
                                 Score         = chosen.Score,
-                                Signals       = string.Join(", ", chosen.MatchedSignals ?? new List<string>()),
+                                Signals       = string.Join(", ", chosen.Entry.MatchedSignals ?? new List<string>()),
                                 Repair        = true
                             }
                         }

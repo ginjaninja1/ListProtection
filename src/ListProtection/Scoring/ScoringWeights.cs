@@ -11,44 +11,62 @@ namespace ListProtection.Scoring
     ///   3. Fire the EvidenceFact in the correct IEvidenceCollector.
     ///   Done — the scorer picks it up automatically.
     ///
-    /// Auto-repair for Audio is governed by a hard gate (AudioAutoRepairEligibility),
-    /// NOT by this score. The score is used solely to rank candidates for the user
-    /// and to select the best candidate when multiple pass the gate.
+    /// ── Design philosophy ─────────────────────────────────────────────────
     ///
-    /// Weight philosophy (for ranking purposes only):
-    ///    50+  = strong identity signal — decisive on its own
-    ///    20–49 = useful corroborating signal
-    ///    1–19  = weak contextual hint
+    /// Signals are COMBINATIONS, not individual fields. A track number alone
+    /// is meaningless; track number + album is a strong identity signal.
+    /// Scores across all media types are calibrated to the same 0–200 scale
+    /// so that shared thresholds (AutoRepairScoreThreshold, MinCandidateDistance)
+    /// apply consistently regardless of media type.
     ///
     /// ── BaseItem signals (all media types) ────────────────────────────────
     ///
-    ///   FilenameStemExact      25  Stem without extension, case-insensitive exact
-    ///   FilenameStemNormalized 15  After stripping track-number prefix ("02. ")
-    ///   NameExact              40  item.Name exact, case-insensitive
-    ///   NameNormalized         20  whitespace-collapsed lowercase
-    ///   ParentFolderMatch      15  Immediate parent folder name
-    ///   GrandparentFolderMatch 10  Two levels up (artist folder for music)
+    ///   FilenameStemExact       25  Stem without extension, case-insensitive exact
+    ///   FilenameStemNormalized  15  After stripping track-number prefix ("02. ")
+    ///   NameExact               40  item.Name exact, case-insensitive
+    ///   NameNormalized          20  Whitespace-collapsed lowercase
+    ///   ParentFolderMatch       15  Immediate parent folder name
+    ///   GrandparentFolderMatch  10  Two levels up
     ///
-    /// ── Audio-specific signals ─────────────────────────────────────────────
+    /// ── Audio signals ─────────────────────────────────────────────────────
     ///
-    ///   ArtistExact            50  GT Artists[0] is exact member of candidate.Artists
-    ///   AlbumExact             40  item.Album exact, case-insensitive
-    ///   AlbumArtistExact       20  item.AlbumArtists[0] exact, case-insensitive
-    ///   IndexOnSameAlbum       30  track number matches AND album matches
-    ///   IndexOnDifferentAlbum  10  track number matches, album differs
-    ///   DurationMatch           5  |RunTimeTicks delta| within 3-second tolerance
+    ///   MbTrackIdMatch         200  MusicBrainz Track ID exact match — definitive
+    ///   NameArtistAlbumIndex   170  Name + Artist + Album + TrackNumber all match
+    ///   NameArtistAlbum        150  Name + Artist + Album all match
+    ///   NameArtistDuration     140  Name + Artist + Duration within tolerance
+    ///   NameAlbumIndex         120  Name + Album + TrackNumber match
+    ///   DurationAlbumIndex     110  Duration + Album + TrackNumber match
+    ///   NameArtist              80  Name + Artist match (no album)
+    ///   NameDuration            70  Name + Duration within tolerance
+    ///   AlbumIndex              50  Album + TrackNumber match
+    ///   NameOnly                30  Name alone (risk of same-name tracks)
+    ///   ArtistAlbum             25  Artist + Album without name (low identity value)
+    ///   FolderMatch             20  Parent folder name
+    ///   FilenameSimilar         15  Filename stem after normalisation
     ///
-    /// Example scores:
-    ///   Same track, same artist, same album, folder renamed:
-    ///     ArtistExact(50) + AlbumExact(40) + NameExact(40) + IndexOnSameAlbum(30)
-    ///     + GrandparentFolderMatch(10) = 170  [gate passes → auto-repairs]
+    /// ── Episode signals ───────────────────────────────────────────────────
     ///
-    ///   Same track, same artist, compilation instead of studio album:
-    ///     ArtistExact(50) + NameExact(40) + IndexOnDifferentAlbum(10)
-    ///     + GrandparentFolderMatch(10) = 110  [gate fails → surfaces to user]
+    ///   TvdbIdMatch            200  TVDB episode ID match — definitive
+    ///   ImdbIdMatch            200  IMDB episode ID match — definitive
+    ///   SeriesSeasonEpDuration 160  Series + Season + EpisodeNumber + Duration
+    ///   SeriesSeasonEpTitle    170  Series + Season + EpisodeNumber + Title
+    ///   SeriesSeasonEp         150  Series + Season + EpisodeNumber
+    ///   SeriesEpDuration       120  Series + EpisodeNumber + Duration (no season)
+    ///   SeriesTitleDuration    110  Series + Title + Duration
+    ///   SeriesSeasonTitle      100  Series + Season + Title
+    ///   SeriesTitle             70  Series + Title
+    ///   SeriesDuration          50  Series + Duration only
+    ///   SeriesOnly              20  Series name alone
     ///
-    ///   Wrong artist, same track name (Jessie Ware - Swan Song):
-    ///     Never reaches scoring — filtered by artist gate in CandidateDiscoverer.
+    /// ── Movie signals ─────────────────────────────────────────────────────
+    ///
+    ///   ImdbMovieIdMatch       200  IMDB movie ID match — definitive
+    ///   TmdbMovieIdMatch       200  TMDB movie ID match — definitive
+    ///   TitleYearDuration      175  Title + Year + Duration within tolerance
+    ///   TitleYear              150  Title (exact) + Year
+    ///   TitleDuration          120  Title (exact) + Duration within tolerance
+    ///   TitleOnly               70  Title exact, no year/duration corroboration
+    ///   DurationOnly            40  Duration match alone (very weak for movies)
     /// </summary>
     public static class ScoringWeights
     {
@@ -61,41 +79,162 @@ namespace ListProtection.Scoring
         public const int ParentFolderMatch = 15;
         public const int GrandparentFolderMatch = 10;
 
-        // ── Audio-specific signals ─────────────────────────────────────────
+        // ── Audio combination signals ──────────────────────────────────────
 
-        public const int ArtistExact = 50;
-        public const int AlbumExact = 40;
-        public const int AlbumArtistExact = 20;
-        public const int IndexOnSameAlbum = 30;
-        public const int IndexOnDifferentAlbum = 10;
-        public const int DurationMatch = 5;
+        public const int MbTrackIdMatch = 200;
+        public const int NameArtistAlbumIndex = 170;
+        public const int NameArtistAlbum = 150;
+        public const int NameArtistDuration = 140;
+        public const int NameAlbumIndex = 120;
+        public const int DurationAlbumIndex = 110;
+        public const int NameArtist = 80;
+        public const int NameDuration = 70;
+        public const int AlbumIndex = 50;
+        public const int NameOnly = 30;
+        public const int ArtistAlbum = 25;
+        public const int AudioFolderMatch = 20;
+        public const int AudioFilenameSimilar = 15;
+
+        // ── Episode combination signals ────────────────────────────────────
+
+        public const int TvdbIdMatch = 200;
+        public const int ImdbEpIdMatch = 200;
+        public const int SeriesSeasonEpTitle = 170;
+        public const int SeriesSeasonEpDuration = 160;
+        public const int SeriesSeasonEp = 150;
+        public const int SeriesEpDuration = 120;
+        public const int SeriesTitleDuration = 110;
+        public const int SeriesSeasonTitle = 100;
+        public const int SeriesTitle = 70;
+        public const int SeriesDuration = 50;
+        public const int SeriesOnly = 20;
+
+        // ── Movie combination signals ──────────────────────────────────────
+
+        public const int ImdbMovieIdMatch = 200;
+        public const int TmdbMovieIdMatch = 200;
+        public const int TitleYearDuration = 175;
+        public const int TitleYear = 150;
+        public const int TitleDuration = 120;
+        public const int TitleOnly = 70;
+        public const int DurationOnly = 40;
 
         // ── Lookup table (signal name → weight) ───────────────────────────
 
         private static readonly Dictionary<string, int> _weights =
             new Dictionary<string, int>
             {
+                // BaseItem
                 { nameof(FilenameStemExact),      FilenameStemExact      },
                 { nameof(FilenameStemNormalized), FilenameStemNormalized },
                 { nameof(NameExact),              NameExact              },
                 { nameof(NameNormalized),         NameNormalized         },
                 { nameof(ParentFolderMatch),      ParentFolderMatch      },
                 { nameof(GrandparentFolderMatch), GrandparentFolderMatch },
-                { nameof(ArtistExact),            ArtistExact            },
-                { nameof(AlbumExact),             AlbumExact             },
-                { nameof(AlbumArtistExact),       AlbumArtistExact       },
-                { nameof(IndexOnSameAlbum),       IndexOnSameAlbum       },
-                { nameof(IndexOnDifferentAlbum),  IndexOnDifferentAlbum  },
-                { nameof(DurationMatch),          DurationMatch          },
+
+                // Audio
+                { nameof(MbTrackIdMatch),         MbTrackIdMatch         },
+                { nameof(NameArtistAlbumIndex),   NameArtistAlbumIndex   },
+                { nameof(NameArtistAlbum),        NameArtistAlbum        },
+                { nameof(NameArtistDuration),     NameArtistDuration     },
+                { nameof(NameAlbumIndex),         NameAlbumIndex         },
+                { nameof(DurationAlbumIndex),     DurationAlbumIndex     },
+                { nameof(NameArtist),             NameArtist             },
+                { nameof(NameDuration),           NameDuration           },
+                { nameof(AlbumIndex),             AlbumIndex             },
+                { nameof(NameOnly),               NameOnly               },
+                { nameof(ArtistAlbum),            ArtistAlbum            },
+                { nameof(AudioFolderMatch),       AudioFolderMatch       },
+                { nameof(AudioFilenameSimilar),   AudioFilenameSimilar   },
+
+                // Episode
+                { nameof(TvdbIdMatch),            TvdbIdMatch            },
+                { nameof(ImdbEpIdMatch),          ImdbEpIdMatch          },
+                { nameof(SeriesSeasonEpTitle),    SeriesSeasonEpTitle    },
+                { nameof(SeriesSeasonEpDuration), SeriesSeasonEpDuration },
+                { nameof(SeriesSeasonEp),         SeriesSeasonEp         },
+                { nameof(SeriesEpDuration),       SeriesEpDuration       },
+                { nameof(SeriesTitleDuration),    SeriesTitleDuration    },
+                { nameof(SeriesSeasonTitle),      SeriesSeasonTitle      },
+                { nameof(SeriesTitle),            SeriesTitle            },
+                { nameof(SeriesDuration),         SeriesDuration         },
+                { nameof(SeriesOnly),             SeriesOnly             },
+
+                // Movie
+                { nameof(ImdbMovieIdMatch),       ImdbMovieIdMatch       },
+                { nameof(TmdbMovieIdMatch),       TmdbMovieIdMatch       },
+                { nameof(TitleYearDuration),      TitleYearDuration      },
+                { nameof(TitleYear),              TitleYear              },
+                { nameof(TitleDuration),          TitleDuration          },
+                { nameof(TitleOnly),              TitleOnly              },
+                { nameof(DurationOnly),           DurationOnly           },
             };
 
-        /// <summary>
-        /// Returns the weight for a signal name, or 0 if unrecognised.
-        /// </summary>
+        /// <summary>Returns the weight for a signal name, or 0 if unrecognised.</summary>
         public static int Get(string signalName)
         {
             if (string.IsNullOrEmpty(signalName)) return 0;
             return _weights.TryGetValue(signalName, out var w) ? w : 0;
+        }
+
+        /// <summary>
+        /// Returns all registered signals grouped by media type for display purposes.
+        /// Key = group label, Value = list of (SignalName, Weight, Description).
+        /// </summary>
+        public static Dictionary<string, List<(string Signal, int Weight, string Description)>> GetScoringReference()
+        {
+            return new Dictionary<string, List<(string, int, string)>>
+            {
+                ["Audio"] = new List<(string, int, string)>
+                {
+                    (nameof(MbTrackIdMatch),       MbTrackIdMatch,       "MusicBrainz Track ID exact match"),
+                    (nameof(NameArtistAlbumIndex), NameArtistAlbumIndex, "Name + Artist + Album + Track number"),
+                    (nameof(NameArtistAlbum),      NameArtistAlbum,      "Name + Artist + Album"),
+                    (nameof(NameArtistDuration),   NameArtistDuration,   "Name + Artist + Duration (within tolerance)"),
+                    (nameof(NameAlbumIndex),       NameAlbumIndex,       "Name + Album + Track number"),
+                    (nameof(DurationAlbumIndex),   DurationAlbumIndex,   "Duration + Album + Track number"),
+                    (nameof(NameArtist),           NameArtist,           "Name + Artist (no album)"),
+                    (nameof(NameDuration),         NameDuration,         "Name + Duration (within tolerance)"),
+                    (nameof(AlbumIndex),           AlbumIndex,           "Album + Track number"),
+                    (nameof(NameOnly),             NameOnly,             "Name alone"),
+                    (nameof(ArtistAlbum),          ArtistAlbum,          "Artist + Album (no name)"),
+                    (nameof(AudioFolderMatch),     AudioFolderMatch,     "Parent folder name match"),
+                    (nameof(AudioFilenameSimilar), AudioFilenameSimilar, "Filename stem after normalisation"),
+                },
+                ["Episode"] = new List<(string, int, string)>
+                {
+                    (nameof(TvdbIdMatch),            TvdbIdMatch,            "TVDB episode ID match"),
+                    (nameof(ImdbEpIdMatch),          ImdbEpIdMatch,          "IMDB episode ID match"),
+                    (nameof(SeriesSeasonEpTitle),    SeriesSeasonEpTitle,    "Series + Season + Episode number + Title"),
+                    (nameof(SeriesSeasonEpDuration), SeriesSeasonEpDuration, "Series + Season + Episode number + Duration"),
+                    (nameof(SeriesSeasonEp),         SeriesSeasonEp,         "Series + Season + Episode number"),
+                    (nameof(SeriesEpDuration),       SeriesEpDuration,       "Series + Episode number + Duration"),
+                    (nameof(SeriesTitleDuration),    SeriesTitleDuration,    "Series + Title + Duration"),
+                    (nameof(SeriesSeasonTitle),      SeriesSeasonTitle,      "Series + Season + Title"),
+                    (nameof(SeriesTitle),            SeriesTitle,            "Series + Title"),
+                    (nameof(SeriesDuration),         SeriesDuration,         "Series + Duration"),
+                    (nameof(SeriesOnly),             SeriesOnly,             "Series name alone"),
+                },
+                ["Movie"] = new List<(string, int, string)>
+                {
+                    (nameof(ImdbMovieIdMatch),   ImdbMovieIdMatch,   "IMDB movie ID match"),
+                    (nameof(TmdbMovieIdMatch),   TmdbMovieIdMatch,   "TMDB movie ID match"),
+                    (nameof(TitleYearDuration),  TitleYearDuration,  "Title + Year + Duration (within tolerance)"),
+                    (nameof(TitleYear),          TitleYear,          "Title + Year"),
+                    (nameof(TitleDuration),      TitleDuration,      "Title + Duration (within tolerance)"),
+                    (nameof(TitleOnly),          TitleOnly,          "Title exact (no year or duration)"),
+                    (nameof(DurationOnly),       DurationOnly,       "Duration match alone"),
+                },
+                ["All media types"] = new List<(string, int, string)>
+                {
+                    (nameof(NameExact),              NameExact,              "Item name exact match"),
+                    (nameof(NameNormalized),         NameNormalized,         "Item name after whitespace normalisation"),
+                    (nameof(FilenameStemExact),      FilenameStemExact,      "Filename stem exact match"),
+                    (nameof(FilenameStemNormalized), FilenameStemNormalized, "Filename stem after track-prefix stripping"),
+                    (nameof(ParentFolderMatch),      ParentFolderMatch,      "Parent folder name match"),
+                    (nameof(GrandparentFolderMatch), GrandparentFolderMatch, "Grandparent folder name match"),
+                },
+            };
         }
     }
 }

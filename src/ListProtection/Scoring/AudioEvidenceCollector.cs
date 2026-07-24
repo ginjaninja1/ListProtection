@@ -1,6 +1,7 @@
 ﻿using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
+using MediaBrowser.Model.Entities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -8,138 +9,119 @@ using System.Linq;
 namespace ListProtection.Scoring
 {
     /// <summary>
-    /// Evidence collector for audio-specific metadata signals.
+    /// Evidence collector for audio-specific combination signals.
+    /// Chains on top of BaseItemEvidenceCollector (name/path signals are handled there).
     /// Only runs when GroundTruthMember.MediaType == "Audio".
     ///
-    /// Signals fired:
-    ///   ArtistExact           — GT Artists[0] appears as exact element of candidate.Artists
-    ///   AlbumExact            — item.Album matches gt.Album, case-insensitive
-    ///   AlbumArtistExact      — item.AlbumArtists[0] matches gt.AlbumArtist, case-insensitive
-    ///   IndexOnSameAlbum      — track number matches AND album also matches (stronger)
-    ///   IndexOnDifferentAlbum — track number matches, album differs (weaker)
-    ///   DurationMatch         — |RunTimeTicks delta| within 3-second tolerance
+    /// Signal hierarchy (highest applicable combination fires; lower tiers do not re-fire
+    /// for the same field set). Folder/filename signals are additive on top.
     ///
-    /// Index signals are mutually exclusive — only the stronger fires when applicable.
+    ///   MbTrackIdMatch         200  MusicBrainz Track ID — definitive; returns immediately
+    ///   NameArtistAlbumIndex   170  Name + Artist + Album + TrackNumber
+    ///   NameArtistAlbum        150  Name + Artist + Album
+    ///   NameArtistDuration     140  Name + Artist + Duration within tolerance
+    ///   NameAlbumIndex         120  Name + Album + TrackNumber
+    ///   DurationAlbumIndex     110  Duration + Album + TrackNumber
+    ///   NameArtist              80  Name + Artist (no album)
+    ///   NameDuration            70  Name + Duration
+    ///   AlbumIndex              50  Album + TrackNumber
+    ///   NameOnly                30  Name alone
+    ///   ArtistAlbum             25  Artist + Album (no name)
     ///
-    /// ArtistExact is a SCORING signal only. The auto-repair gate
-    /// (AudioAutoRepairEligibility) independently enforces artist match as a hard
-    /// precondition — the score is used only for ranking candidates for the user.
+    /// Duration tolerance injected at construction from
+    /// PluginConfiguration.AudioDurationToleranceSeconds (default 2s).
     ///
-    /// Fields that are null/empty/zero in the GT snapshot do not fire their signal.
-    /// Absence of metadata is not evidence of a mismatch.
-    ///
-    /// This collector chains on top of BaseItemEvidenceCollector — it does not
-    /// re-evaluate name or path signals.
+    /// Fields null/empty/zero in the GT snapshot do not contribute to combinations.
     /// </summary>
     public sealed class AudioEvidenceCollector : IEvidenceCollector
     {
-        // 3-second tolerance in ticks (1 tick = 100 nanoseconds)
-        private const long DurationToleranceTicks = 3L * 10_000_000L;
+        private readonly long _durationToleranceTicks;
 
-        /// <inheritdoc/>
+        public AudioEvidenceCollector(int durationToleranceSeconds = 2)
+        {
+            _durationToleranceTicks = (long)durationToleranceSeconds * 10_000_000L;
+        }
+
         public string MediaType => "Audio";
 
-        /// <inheritdoc/>
         public IEnumerable<EvidenceFact> Collect(GroundTruthMember gt, BaseItem candidate)
         {
             var facts = new List<EvidenceFact>();
 
-            if (gt == null || candidate == null)
-                return facts;
+            if (gt == null || candidate == null) return facts;
+            if (!(candidate is Audio audio)) return facts;
 
-            if (!(candidate is Audio audio))
-                return facts;
+            // ── Primitive signals ──────────────────────────────────────────
 
-            // ── Artist (exact membership) ──────────────────────────────────
-            // GT Artists[0] must appear as an exact element of candidate.Artists.
-            // Additional artists on the candidate are not a disqualification.
+            // MusicBrainz Track ID
+            var gtMbId = gt.MusicBrainzTrackId;
+            var candidateMbId = GetProviderId(audio, MetadataProviders.MusicBrainzTrack);
+            var mbMatch = !string.IsNullOrEmpty(gtMbId) &&
+                          !string.IsNullOrEmpty(candidateMbId) &&
+                          string.Equals(gtMbId, candidateMbId, StringComparison.OrdinalIgnoreCase);
 
-            var gtArtist = GetPrimaryArtist(gt.Artists);
-            if (!string.IsNullOrEmpty(gtArtist))
+            if (mbMatch)
             {
-                var candidateArtists = GetArtistList(audio);
-                if (candidateArtists.Any(a =>
-                    string.Equals(a, gtArtist, StringComparison.OrdinalIgnoreCase)))
-                {
-                    facts.Add(new EvidenceFact(nameof(ScoringWeights.ArtistExact)));
-                }
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.MbTrackIdMatch)));
+                return facts; // definitive — nothing else needed
             }
 
-            // ── Album ──────────────────────────────────────────────────────
+            var nameMatch = !string.IsNullOrEmpty(gt.Name) &&
+                            string.Equals(gt.Name, audio.Name, StringComparison.OrdinalIgnoreCase);
 
-            var albumMatches = !string.IsNullOrEmpty(gt.Album) &&
-                               !string.IsNullOrEmpty(audio.Album) &&
-                               string.Equals(gt.Album, audio.Album, StringComparison.OrdinalIgnoreCase);
+            var gtArtist = gt.Artists != null && gt.Artists.Count > 0 ? gt.Artists[0] : null;
+            var artistMatch = !string.IsNullOrEmpty(gtArtist) &&
+                              (audio.Artists ?? Array.Empty<string>()).Any(a =>
+                                  string.Equals(a, gtArtist, StringComparison.OrdinalIgnoreCase));
 
-            if (albumMatches)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.AlbumExact)));
+            var albumMatch = !string.IsNullOrEmpty(gt.Album) &&
+                             !string.IsNullOrEmpty(audio.Album) &&
+                             string.Equals(gt.Album, audio.Album, StringComparison.OrdinalIgnoreCase);
 
-            // ── Album artist ───────────────────────────────────────────────
+            var indexMatch = gt.IndexNumber.HasValue && gt.IndexNumber.Value > 0 &&
+                             audio.IndexNumber.HasValue &&
+                             gt.IndexNumber.Value == audio.IndexNumber.Value;
 
-            if (!string.IsNullOrEmpty(gt.AlbumArtist))
-            {
-                var candidateAlbumArtist = GetFirstAlbumArtist(audio);
-                if (!string.IsNullOrEmpty(candidateAlbumArtist) &&
-                    string.Equals(gt.AlbumArtist, candidateAlbumArtist, StringComparison.OrdinalIgnoreCase))
-                {
-                    facts.Add(new EvidenceFact(nameof(ScoringWeights.AlbumArtistExact)));
-                }
-            }
+            var durationMatch = gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
+                                audio.RunTimeTicks.HasValue && audio.RunTimeTicks.Value > 0 &&
+                                Math.Abs(gt.RunTimeTicks.Value - audio.RunTimeTicks.Value) <= _durationToleranceTicks;
 
-            // ── Index number (mutually exclusive — same album is stronger) ─
+            // ── Combination signals (highest applicable fires) ─────────────
 
-            if (gt.IndexNumber.HasValue && gt.IndexNumber.Value > 0 &&
-                audio.IndexNumber.HasValue &&
-                gt.IndexNumber.Value == audio.IndexNumber.Value)
-            {
-                facts.Add(albumMatches
-                    ? new EvidenceFact(nameof(ScoringWeights.IndexOnSameAlbum))
-                    : new EvidenceFact(nameof(ScoringWeights.IndexOnDifferentAlbum)));
-            }
-
-            // ── Duration ──────────────────────────────────────────────────
-
-            if (gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
-                audio.RunTimeTicks.HasValue && audio.RunTimeTicks.Value > 0)
-            {
-                var delta = Math.Abs(gt.RunTimeTicks.Value - audio.RunTimeTicks.Value);
-                if (delta <= DurationToleranceTicks)
-                    facts.Add(new EvidenceFact(nameof(ScoringWeights.DurationMatch)));
-            }
+            if (nameMatch && artistMatch && albumMatch && indexMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistAlbumIndex)));
+            else if (nameMatch && artistMatch && albumMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistAlbum)));
+            else if (nameMatch && artistMatch && durationMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistDuration)));
+            else if (nameMatch && albumMatch && indexMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameAlbumIndex)));
+            else if (durationMatch && albumMatch && indexMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.DurationAlbumIndex)));
+            else if (nameMatch && artistMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtist)));
+            else if (nameMatch && durationMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameDuration)));
+            else if (albumMatch && indexMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.AlbumIndex)));
+            else if (nameMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameOnly)));
+            else if (artistMatch && albumMatch)
+                facts.Add(new EvidenceFact(nameof(ScoringWeights.ArtistAlbum)));
 
             return facts;
         }
 
-        // ── Helpers ────────────────────────────────────────────────────────
-
-        private static string GetPrimaryArtist(List<string> artists)
-        {
-            if (artists == null || artists.Count == 0) return null;
-            return artists[0];
-        }
-
-        private static List<string> GetArtistList(Audio audio)
+        private static string GetProviderId(Audio audio, MetadataProviders provider)
         {
             try
             {
-                var artists = audio.Artists;
-                if (artists == null || artists.Length == 0) return new List<string>();
-                return artists
-                    .Where(a => !string.IsNullOrWhiteSpace(a))
-                    .ToList();
+                var ids = audio.ProviderIds;
+                if (ids == null) return null;
+                var key = provider.ToString();
+                return ids.TryGetValue(key, out var val) ? val : null;
             }
-            catch { return new List<string>(); }
-        }
-
-        private static string GetFirstAlbumArtist(Audio audio)
-        {
-            try
-            {
-                var artists = audio.AlbumArtists;
-                if (artists == null || artists.Length == 0) return string.Empty;
-                return artists[0] ?? string.Empty;
-            }
-            catch { return string.Empty; }
+            catch { return null; }
         }
     }
 }

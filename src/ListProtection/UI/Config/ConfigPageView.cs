@@ -27,9 +27,22 @@ namespace ListProtection.UI.Config
                 var config = plugin.Configuration;
 
                 config.AutoRepairEnabled = Config.AutoRepairEnabled;
+                config.AutoRepairScoreThreshold = Config.AutoRepairScoreThreshold;
+                config.AutoRepairMinCandidateDistance = Config.AutoRepairMinCandidateDistance;
                 config.AutoDiscoverCandidates = Config.AutoDiscoverCandidates;
+                config.AudioDurationToleranceSeconds = Config.AudioDurationToleranceSeconds;
+                config.EpisodeDurationToleranceSeconds = Config.EpisodeDurationToleranceSeconds;
+                config.MovieDurationToleranceSeconds = Config.MovieDurationToleranceSeconds;
 
                 plugin.SaveConfiguration();
+
+                return Task.FromResult((IPluginUIView)this);
+            }
+
+            if (commandId == "viewscoring" || itemId == "viewscoring")
+            {
+                var dialog = new ScoringReferenceDialog(PluginId);
+                return Task.FromResult((IPluginUIView)dialog);
             }
 
             return Task.FromResult((IPluginUIView)this);
@@ -38,7 +51,12 @@ namespace ListProtection.UI.Config
         private static ConfigUI BuildUI(PluginConfiguration config) => new ConfigUI
         {
             AutoRepairEnabled = config.AutoRepairEnabled,
-            AutoDiscoverCandidates = config.AutoDiscoverCandidates
+            AutoRepairScoreThreshold = config.AutoRepairScoreThreshold,
+            AutoRepairMinCandidateDistance = config.AutoRepairMinCandidateDistance,
+            AutoDiscoverCandidates = config.AutoDiscoverCandidates,
+            AudioDurationToleranceSeconds = config.AudioDurationToleranceSeconds,
+            EpisodeDurationToleranceSeconds = config.EpisodeDurationToleranceSeconds,
+            MovieDurationToleranceSeconds = config.MovieDurationToleranceSeconds,
         };
     }
 }

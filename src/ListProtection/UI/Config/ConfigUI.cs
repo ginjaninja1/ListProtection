@@ -5,14 +5,6 @@ using MediaBrowser.Model.Attributes;
 
 namespace ListProtection.UI.Config
 {
-    /// <summary>
-    /// View model for the configuration tab. Rendered by Emby's GenericEdit
-    /// infrastructure. Never persisted — ConfigPageView maps between this and
-    /// PluginConfiguration (the actual persistence model) on every AutoPostBack.
-    ///
-    /// Auto-repair is governed by a hard semantic gate (name + artist + album).
-    /// AutoRepairThreshold and AutoRepairMaxPerRun have been removed.
-    /// </summary>
     public class ConfigUI : EditableOptionsBase
     {
         public override string EditorTitle => "List Protection — Configuration";
@@ -27,12 +19,32 @@ namespace ListProtection.UI.Config
 
         [DisplayName("Enable Auto-Repair")]
         [Description(
-            "When enabled, missing playlist members are automatically repaired after " +
-            "candidate discovery if the candidate passes the eligibility gate: " +
-            "track name, artist, and album must all match exactly. " +
-            "Leave disabled until you are confident in scoring results for your library.")]
+            "When enabled, missing playlist members are automatically repaired when a " +
+            "candidate clears the score threshold, the minimum candidate distance, and the " +
+            "semantic gate for its media type. Leave disabled until you are satisfied with " +
+            "scoring results for your library.")]
         [AutoPostBack("updateconfig", nameof(AutoRepairEnabled))]
         public bool AutoRepairEnabled { get; set; } = false;
+
+        [DisplayName("Score Threshold")]
+        [Description(
+            "Minimum score a candidate must achieve to be eligible for auto-repair. " +
+            "Candidates below this score are surfaced for manual review only. Default: 150.")]
+        [AutoPostBack("updateconfig", nameof(AutoRepairScoreThreshold))]
+        public int AutoRepairScoreThreshold { get; set; } = 150;
+
+        [DisplayName("Minimum Candidate Distance")]
+        [Description(
+            "Minimum score gap required between the top candidate and the second-best candidate. " +
+            "If the gap is smaller, the repair is considered ambiguous and queued for manual review. " +
+            "Set to 0 to disable the gap check. Default: 50.")]
+        [AutoPostBack("updateconfig", nameof(AutoRepairMinCandidateDistance))]
+        public int AutoRepairMinCandidateDistance { get; set; } = 50;
+
+        [DisplayName("Scoring Reference")]
+        [Description("Open the signal weight reference for all media types.")]
+        [AutoPostBack("viewscoring", nameof(ViewScoringReference))]
+        public bool ViewScoringReference { get; set; } = false;
 
         // ── Candidate Discovery ────────────────────────────────────────────
 
@@ -41,10 +53,34 @@ namespace ListProtection.UI.Config
         [DisplayName("Auto-Discover Candidates on Detection")]
         [Description(
             "When enabled, candidate discovery runs automatically after missing members " +
-            "are detected via file rename or removal events. " +
-            "When disabled, discovery only runs on the scheduled daily sweep or " +
-            "a manual task trigger from the Emby dashboard.")]
+            "are detected. When disabled, discovery only runs on the scheduled daily sweep " +
+            "or a manual task trigger from the Emby dashboard.")]
         [AutoPostBack("updateconfig", nameof(AutoDiscoverCandidates))]
         public bool AutoDiscoverCandidates { get; set; } = true;
+
+        // ── Duration Tolerances ────────────────────────────────────────────
+
+        public CaptionItem DurationHeading { get; set; } = new CaptionItem("Duration Tolerances");
+
+        [DisplayName("Audio Duration Tolerance (seconds)")]
+        [Description(
+            "Maximum duration difference (in seconds) for a duration signal to fire on Audio items. " +
+            "Covers re-encodes and minor trim differences. Default: 2.")]
+        [AutoPostBack("updateconfig", nameof(AudioDurationToleranceSeconds))]
+        public int AudioDurationToleranceSeconds { get; set; } = 2;
+
+        [DisplayName("Episode Duration Tolerance (seconds)")]
+        [Description(
+            "Maximum duration difference (in seconds) for a duration signal to fire on Episode items. " +
+            "Covers intro/outro cuts across sources. Default: 5.")]
+        [AutoPostBack("updateconfig", nameof(EpisodeDurationToleranceSeconds))]
+        public int EpisodeDurationToleranceSeconds { get; set; } = 5;
+
+        [DisplayName("Movie Duration Tolerance (seconds)")]
+        [Description(
+            "Maximum duration difference (in seconds) for a duration signal to fire on Movie items. " +
+            "Covers edition cuts and encode differences. Default: 10.")]
+        [AutoPostBack("updateconfig", nameof(MovieDurationToleranceSeconds))]
+        public int MovieDurationToleranceSeconds { get; set; } = 10;
     }
 }

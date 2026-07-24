@@ -24,6 +24,8 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Remove="PluginServices.cs" />
+		<Compile Remove="Scoring\BaseitemEvidenceCollector.old.cs" />
+		<Compile Remove="Scoring\IAutoRepairEligability.cs" />
 		<Compile Remove="Services\PosterCopyService.cs" />
 		<Compile Remove="Services\SimulationService.cs" />
 		<Compile Remove="Storage\BasicsOptionsStore.cs" />

@@ -4,19 +4,16 @@ namespace ListProtection.UI.Config
 {
     public class ScoringReferenceRow
     {
-        [DisplayName("Media Type")]
-        public string MediaType { get; set; }
-
-        [DisplayName("Signal Type")]
-        public string SignalType { get; set; }
+        [DisplayName("Tier")]
+        public string Tier { get; set; }
 
         [DisplayName("Score")]
         public int Score { get; set; }
 
-        [DisplayName("Signal")]
+        [DisplayName("Signals Required")]
         public string Signal { get; set; }
 
-        [DisplayName("Description")]
-        public string Description { get; set; }
+        [DisplayName("Notes")]
+        public string Notes { get; set; }
     }
 }

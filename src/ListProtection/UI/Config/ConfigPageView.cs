@@ -43,7 +43,7 @@ namespace ListProtection.UI.Config
 
             if (commandId == "viewscoring")
             {
-                var dialog = new ScoringReferenceDialog(PluginId);
+                var dialog = new ScoringReferenceDialog(PluginId, ListProtectionPlugin.Instance.Configuration);
                 return Task.FromResult((IPluginUIView)dialog);
             }
 

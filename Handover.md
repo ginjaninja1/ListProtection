@@ -8,8 +8,6 @@
 
 ---
 
-## Active branch
-`NewScoring` — do not touch `master` until this branch is validated and merged.
 
 ---
 

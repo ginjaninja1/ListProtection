@@ -8,32 +8,14 @@ using System.Collections.Generic;
 namespace ListProtection.Scoring
 {
     /// <summary>
-    /// Evidence collector for episode-specific combination signals.
-    /// Chains on top of BaseItemEvidenceCollector.
-    /// Only runs when GroundTruthMember.MediaType == "Episode".
+    /// Emits atomic facts for Episode items. No combination logic.
     ///
-    /// Identity for episodes is positional (Series + Season + Episode number),
-    /// not by title — titles are unreliable (TBA placeholders, regional variants).
-    ///
-    /// Provider IDs are checked at the Series level — episode-level TVDB/IMDB IDs
-    /// are not reliably populated by Emby. SeriesTvdbId/SeriesImdbId are captured
-    /// in the GT snapshot at protect time from the parent Series item.
-    ///
-    ///   SeriesSeasonEpTitle    170  Series + Season + EpisodeNumber + Title
-    ///   SeriesSeasonEpDuration 160  Series + Season + EpisodeNumber + Duration
-    ///   SeriesSeasonEp         150  Series + Season + EpisodeNumber
-    ///   SeriesEpDuration       120  Series + EpisodeNumber + Duration (no season)
-    ///   SeriesTitleDuration    110  Series + Title + Duration
-    ///   SeriesSeasonTitle      100  Series + Season + Title
-    ///   SeriesTitle             70  Series + Title
-    ///   SeriesDuration          50  Series + Duration
-    ///   SeriesOnly              20  Series alone
-    ///
-    /// Duration tolerance injected at construction from
-    /// PluginConfiguration.EpisodeDurationToleranceSeconds (default 5s).
-    ///
-    /// SeriesTvdbId/ImdbId match are additive bonus signals (not in the combination
-    /// hierarchy) since they confirm series identity without pinning the episode.
+    /// Atomic facts emitted:
+    ///   SeriesMatch       — series name or provider ID matches
+    ///   SeasonMatch       — season number matches
+    ///   EpisodeMatch      — episode number matches
+    ///   TitleMatch        — episode title matches
+    ///   DurationMatch     — duration within tolerance
     /// </summary>
     public sealed class EpisodeEvidenceCollector : IEvidenceCollector
     {
@@ -53,15 +35,12 @@ namespace ListProtection.Scoring
             if (gt == null || candidate == null) return facts;
             if (!(candidate is Episode episode)) return facts;
 
-            // ── Primitive signals ──────────────────────────────────────────
-
             var candidateSeriesName = episode.FindSeriesName();
 
             var seriesNameMatch = !string.IsNullOrEmpty(gt.SeriesName) &&
                                   !string.IsNullOrEmpty(candidateSeriesName) &&
                                   string.Equals(gt.SeriesName, candidateSeriesName, StringComparison.OrdinalIgnoreCase);
 
-            // Series provider ID — confirms series identity even if name has minor variant
             var seriesProviderMatch = false;
             if (!string.IsNullOrEmpty(gt.SeriesTvdbId) || !string.IsNullOrEmpty(gt.SeriesImdbId))
             {
@@ -84,49 +63,40 @@ namespace ListProtection.Scoring
                 }
             }
 
-            // Use either name match or provider match to establish series identity
-            var seriesMatch = seriesNameMatch || seriesProviderMatch;
+            if (!seriesNameMatch && !seriesProviderMatch) return facts;
 
-            if (!seriesMatch) return facts; // no series match = no useful signals
+            facts.Add(new EvidenceFact(EpisodeFacts.SeriesMatch));
 
-            var seasonMatch = gt.SeasonNumber.HasValue &&
-                              episode.ParentIndexNumber.HasValue &&
-                              gt.SeasonNumber.Value == episode.ParentIndexNumber.Value;
+            if (gt.SeasonNumber.HasValue &&
+                episode.ParentIndexNumber.HasValue &&
+                gt.SeasonNumber.Value == episode.ParentIndexNumber.Value)
+                facts.Add(new EvidenceFact(EpisodeFacts.SeasonMatch));
 
-            var episodeMatch = gt.IndexNumber.HasValue &&
-                               episode.IndexNumber.HasValue &&
-                               gt.IndexNumber.Value == episode.IndexNumber.Value;
+            if (gt.IndexNumber.HasValue &&
+                episode.IndexNumber.HasValue &&
+                gt.IndexNumber.Value == episode.IndexNumber.Value)
+                facts.Add(new EvidenceFact(EpisodeFacts.EpisodeMatch));
 
-            var titleMatch = !string.IsNullOrEmpty(gt.Name) &&
-                             !string.IsNullOrEmpty(episode.Name) &&
-                             string.Equals(gt.Name, episode.Name, StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(gt.Name) &&
+                !string.IsNullOrEmpty(episode.Name) &&
+                string.Equals(gt.Name, episode.Name, StringComparison.OrdinalIgnoreCase))
+                facts.Add(new EvidenceFact(EpisodeFacts.TitleMatch));
 
-            var durationMatch = gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
-                                episode.RunTimeTicks.HasValue && episode.RunTimeTicks.Value > 0 &&
-                                Math.Abs(gt.RunTimeTicks.Value - episode.RunTimeTicks.Value) <= _durationToleranceTicks;
-
-            // ── Combination signals (highest applicable fires) ─────────────
-
-            if (seriesMatch && seasonMatch && episodeMatch && titleMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesSeasonEpTitle)));
-            else if (seriesMatch && seasonMatch && episodeMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesSeasonEpDuration)));
-            else if (seriesMatch && seasonMatch && episodeMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesSeasonEp)));
-            else if (seriesMatch && episodeMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesEpDuration)));
-            else if (seriesMatch && titleMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesTitleDuration)));
-            else if (seriesMatch && seasonMatch && titleMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesSeasonTitle)));
-            else if (seriesMatch && titleMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesTitle)));
-            else if (seriesMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesDuration)));
-            else
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.SeriesOnly)));
+            if (gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
+                episode.RunTimeTicks.HasValue && episode.RunTimeTicks.Value > 0 &&
+                Math.Abs(gt.RunTimeTicks.Value - episode.RunTimeTicks.Value) <= _durationToleranceTicks)
+                facts.Add(new EvidenceFact(EpisodeFacts.DurationMatch));
 
             return facts;
         }
+    }
+
+    public static class EpisodeFacts
+    {
+        public const string SeriesMatch = "Episode.SeriesMatch";
+        public const string SeasonMatch = "Episode.SeasonMatch";
+        public const string EpisodeMatch = "Episode.EpisodeMatch";
+        public const string TitleMatch = "Episode.TitleMatch";
+        public const string DurationMatch = "Episode.DurationMatch";
     }
 }

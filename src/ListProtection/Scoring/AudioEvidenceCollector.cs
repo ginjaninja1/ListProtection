@@ -9,29 +9,15 @@ using System.Linq;
 namespace ListProtection.Scoring
 {
     /// <summary>
-    /// Evidence collector for audio-specific combination signals.
-    /// Chains on top of BaseItemEvidenceCollector (name/path signals are handled there).
-    /// Only runs when GroundTruthMember.MediaType == "Audio".
+    /// Emits atomic facts for Audio items. No combination logic — that lives in CandidateScorer.
     ///
-    /// Signal hierarchy (highest applicable combination fires; lower tiers do not re-fire
-    /// for the same field set). Folder/filename signals are additive on top.
-    ///
-    ///   MbTrackIdMatch         200  MusicBrainz Track ID — definitive; returns immediately
-    ///   NameArtistAlbumIndex   170  Name + Artist + Album + TrackNumber
-    ///   NameArtistAlbum        150  Name + Artist + Album
-    ///   NameArtistDuration     140  Name + Artist + Duration within tolerance
-    ///   NameAlbumIndex         120  Name + Album + TrackNumber
-    ///   DurationAlbumIndex     110  Duration + Album + TrackNumber
-    ///   NameArtist              80  Name + Artist (no album)
-    ///   NameDuration            70  Name + Duration
-    ///   AlbumIndex              50  Album + TrackNumber
-    ///   NameOnly                30  Name alone
-    ///   ArtistAlbum             25  Artist + Album (no name)
-    ///
-    /// Duration tolerance injected at construction from
-    /// PluginConfiguration.AudioDurationToleranceSeconds (default 2s).
-    ///
-    /// Fields null/empty/zero in the GT snapshot do not contribute to combinations.
+    /// Atomic facts emitted:
+    ///   MbTrackIdMatch   — MusicBrainz Track ID exact match
+    ///   NameMatch        — item.Name case-insensitive exact
+    ///   ArtistMatch      — any artist matches GT primary artist
+    ///   AlbumMatch       — item.Album exact match
+    ///   TrackNumberMatch — item.IndexNumber matches GT IndexNumber
+    ///   DurationMatch    — RunTimeTicks within tolerance
     /// </summary>
     public sealed class AudioEvidenceCollector : IEvidenceCollector
     {
@@ -51,63 +37,41 @@ namespace ListProtection.Scoring
             if (gt == null || candidate == null) return facts;
             if (!(candidate is Audio audio)) return facts;
 
-            // ── Primitive signals ──────────────────────────────────────────
-
             // MusicBrainz Track ID
             var gtMbId = gt.MusicBrainzTrackId;
             var candidateMbId = GetProviderId(audio, MetadataProviders.MusicBrainzTrack);
-            var mbMatch = !string.IsNullOrEmpty(gtMbId) &&
-                          !string.IsNullOrEmpty(candidateMbId) &&
-                          string.Equals(gtMbId, candidateMbId, StringComparison.OrdinalIgnoreCase);
-
-            if (mbMatch)
+            if (!string.IsNullOrEmpty(gtMbId) &&
+                !string.IsNullOrEmpty(candidateMbId) &&
+                string.Equals(gtMbId, candidateMbId, StringComparison.OrdinalIgnoreCase))
             {
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.MbTrackIdMatch)));
-                return facts; // definitive — nothing else needed
+                facts.Add(new EvidenceFact(AudioFacts.MbTrackIdMatch));
+                return facts; // definitive — no further facts needed
             }
 
-            var nameMatch = !string.IsNullOrEmpty(gt.Name) &&
-                            string.Equals(gt.Name, audio.Name, StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(gt.Name) &&
+                string.Equals(gt.Name, audio.Name, StringComparison.OrdinalIgnoreCase))
+                facts.Add(new EvidenceFact(AudioFacts.NameMatch));
 
             var gtArtist = gt.Artists != null && gt.Artists.Count > 0 ? gt.Artists[0] : null;
-            var artistMatch = !string.IsNullOrEmpty(gtArtist) &&
-                              (audio.Artists ?? Array.Empty<string>()).Any(a =>
-                                  string.Equals(a, gtArtist, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(gtArtist) &&
+                (audio.Artists ?? Array.Empty<string>()).Any(a =>
+                    string.Equals(a, gtArtist, StringComparison.OrdinalIgnoreCase)))
+                facts.Add(new EvidenceFact(AudioFacts.ArtistMatch));
 
-            var albumMatch = !string.IsNullOrEmpty(gt.Album) &&
-                             !string.IsNullOrEmpty(audio.Album) &&
-                             string.Equals(gt.Album, audio.Album, StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(gt.Album) &&
+                !string.IsNullOrEmpty(audio.Album) &&
+                string.Equals(gt.Album, audio.Album, StringComparison.OrdinalIgnoreCase))
+                facts.Add(new EvidenceFact(AudioFacts.AlbumMatch));
 
-            var indexMatch = gt.IndexNumber.HasValue && gt.IndexNumber.Value > 0 &&
-                             audio.IndexNumber.HasValue &&
-                             gt.IndexNumber.Value == audio.IndexNumber.Value;
+            if (gt.IndexNumber.HasValue && gt.IndexNumber.Value > 0 &&
+                audio.IndexNumber.HasValue &&
+                gt.IndexNumber.Value == audio.IndexNumber.Value)
+                facts.Add(new EvidenceFact(AudioFacts.TrackNumberMatch));
 
-            var durationMatch = gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
-                                audio.RunTimeTicks.HasValue && audio.RunTimeTicks.Value > 0 &&
-                                Math.Abs(gt.RunTimeTicks.Value - audio.RunTimeTicks.Value) <= _durationToleranceTicks;
-
-            // ── Combination signals (highest applicable fires) ─────────────
-
-            if (nameMatch && artistMatch && albumMatch && indexMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistAlbumIndex)));
-            else if (nameMatch && artistMatch && albumMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistAlbum)));
-            else if (nameMatch && artistMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtistDuration)));
-            else if (nameMatch && albumMatch && indexMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameAlbumIndex)));
-            else if (durationMatch && albumMatch && indexMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.DurationAlbumIndex)));
-            else if (nameMatch && artistMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameArtist)));
-            else if (nameMatch && durationMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameDuration)));
-            else if (albumMatch && indexMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.AlbumIndex)));
-            else if (nameMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.NameOnly)));
-            else if (artistMatch && albumMatch)
-                facts.Add(new EvidenceFact(nameof(ScoringWeights.ArtistAlbum)));
+            if (gt.RunTimeTicks.HasValue && gt.RunTimeTicks.Value > 0 &&
+                audio.RunTimeTicks.HasValue && audio.RunTimeTicks.Value > 0 &&
+                Math.Abs(gt.RunTimeTicks.Value - audio.RunTimeTicks.Value) <= _durationToleranceTicks)
+                facts.Add(new EvidenceFact(AudioFacts.DurationMatch));
 
             return facts;
         }
@@ -118,10 +82,20 @@ namespace ListProtection.Scoring
             {
                 var ids = audio.ProviderIds;
                 if (ids == null) return null;
-                var key = provider.ToString();
-                return ids.TryGetValue(key, out var val) ? val : null;
+                return ids.TryGetValue(provider.ToString(), out var val) ? val : null;
             }
             catch { return null; }
         }
+    }
+
+    /// <summary>Signal name constants for AudioEvidenceCollector facts.</summary>
+    public static class AudioFacts
+    {
+        public const string MbTrackIdMatch = "MbTrackIdMatch";
+        public const string NameMatch = "Audio.NameMatch";
+        public const string ArtistMatch = "Audio.ArtistMatch";
+        public const string AlbumMatch = "Audio.AlbumMatch";
+        public const string TrackNumberMatch = "Audio.TrackNumberMatch";
+        public const string DurationMatch = "Audio.DurationMatch";
     }
 }

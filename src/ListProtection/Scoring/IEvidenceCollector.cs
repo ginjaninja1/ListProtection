@@ -5,31 +5,31 @@ using System.Collections.Generic;
 namespace ListProtection.Scoring
 {
     /// <summary>
-    /// Produces EvidenceFacts by comparing a GT member snapshot against a
-    /// live candidate BaseItem.
+    /// Produces atomic EvidenceFacts by observing a GT member snapshot
+    /// against a live candidate BaseItem.
     ///
-    /// Implementations are media-type specific:
-    ///   BaseItemEvidenceCollector  — path/name signals, applicable to all BaseItems
-    ///   AudioEvidenceCollector     — album/artist/track/duration, Audio only
+    /// Collectors are dumb observers — they never decide what a fact is worth,
+    /// never suppress other facts, never apply combination logic.
+    /// All weighting and combination logic lives in CandidateScorer.
     ///
-    /// CandidateDiscoverer selects which collectors to run based on
-    /// GroundTruthMember.MediaType. BaseItemEvidenceCollector always runs;
-    /// a media-type-specific collector is chained on top when the MediaType matches.
+    /// Three collector tiers:
+    ///   Tier 1 — Media-type collectors (Audio, Episode, Movie)
+    ///            Emit atomic metadata facts. Run when MediaType matches.
+    ///   Tier 2 — FolderEvidenceCollector
+    ///            Emits depth facts. Always runs. Independent of Tiers 1 and 3.
+    ///   Tier 3 — FallbackEvidenceCollector
+    ///            Emits name/filename facts. Consulted only when ContentScore == 0.
     ///
-    /// Collectors must never throw — return an empty list on any error.
+    /// Collectors must never throw — return empty list on any error.
     /// </summary>
     public interface IEvidenceCollector
     {
         /// <summary>
-        /// The MediaType this collector handles, e.g. "Audio", "Episode", "Movie".
-        /// Null means the collector applies to all media types (base collector).
+        /// MediaType this collector handles e.g. "Audio", "Episode", "Movie".
+        /// Null means the collector applies to all media types.
         /// </summary>
         string MediaType { get; }
 
-        /// <summary>
-        /// Extracts evidence facts from the comparison of a GT member snapshot
-        /// against a live candidate item.
-        /// </summary>
         IEnumerable<EvidenceFact> Collect(GroundTruthMember gt, BaseItem candidate);
     }
 }

@@ -50,17 +50,32 @@ namespace ListProtection.Storage
         /// </summary>
         public string CandidatePath { get; set; }
 
-        // ── Scoring ────────────────────────────────────────────────────────
+        // Scoring region — replace existing Score + MatchedSignals block with:
 
         /// <summary>
-        /// Composite score — sum of all matched signal weights.
-        /// Higher is better. Zero means no signal matched.
+        /// Score from Tier 1 media-type rule table. 0 if no rule matched.
+        /// </summary>
+        public int ContentScore { get; set; }
+
+        /// <summary>
+        /// Score from Tier 3 fallback rule table. 0 if ContentScore > 0.
+        /// </summary>
+        public int FallbackScore { get; set; }
+
+        /// <summary>
+        /// Cumulative folder depth score. Only present when a content anchor exists.
+        /// </summary>
+        public int LocationScore { get; set; }
+
+        /// <summary>
+        /// ContentScore + FallbackScore + LocationScore.
+        /// Primary sort key for candidate ranking.
         /// </summary>
         public int Score { get; set; }
 
         /// <summary>
-        /// Human-readable list of the signals that contributed to Score.
-        /// e.g. ["FilenameStemExact:100", "NameExact:60"]
+        /// All atomic facts observed plus the rule that fired.
+        /// Format: signal names then "RuleName:Score" entry.
         /// </summary>
         public List<string> MatchedSignals { get; set; } = new List<string>();
 

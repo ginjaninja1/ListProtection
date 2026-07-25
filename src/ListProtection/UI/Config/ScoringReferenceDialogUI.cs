@@ -6,11 +6,6 @@ using System;
 
 namespace ListProtection.UI.Config
 {
-    /// <summary>
-    /// Read-only full-height dialog grid showing signal weights for all media types.
-    /// Extends EditableObjectBase — matches the dialog UI pattern (GroundTruthDialogUI).
-    /// No editable columns, no onChangeCommand, no search or filter rows.
-    /// </summary>
     public class ScoringReferenceDialogUI : EditableObjectBase
     {
         public override string EditorTitle => null;
@@ -40,13 +35,6 @@ namespace ListProtection.UI.Config
                 {
                     col.allowEditing = false;
 
-                    if (col.dataField == "Score")
-                    {
-                        col.width = 70;
-                        col.sortIndex = 0;
-                        col.sortOrder = "desc";
-                    }
-
                     if (col.dataField == "MediaType")
                     {
                         col.width = 130;
@@ -54,6 +42,21 @@ namespace ListProtection.UI.Config
                         col.showWhenGrouped = false;
                         col.autoExpandGroup = true;
                         col.allowHeaderFiltering = false;
+                    }
+
+                    if (col.dataField == "SignalType")
+                    {
+                        col.groupIndex = 1;
+                        col.showWhenGrouped = false;
+                        col.autoExpandGroup = true;
+                        col.allowHeaderFiltering = false;
+                    }
+
+                    if (col.dataField == "Score")
+                    {
+                        col.width = 70;
+                        col.sortIndex = 0;
+                        col.sortOrder = "desc";
                     }
 
                     if (col.dataField == "Signal")

@@ -6,15 +6,21 @@ using System.Threading.Tasks;
 
 namespace ListProtection.UI.Config
 {
-    /// <summary>
-    /// Read-only full-screen dialog showing signal weights for all media types.
-    /// Launched from the "View Scoring Reference" button on the config page.
-    ///
-    /// AllowOk = false, AllowCancel = true — Close button only.
-    /// All RunCommand calls delegate to base (returns null = framework closes dialog).
-    /// </summary>
     internal sealed class ScoringReferenceDialog : PluginDialogView
     {
+        private static readonly HashSet<string> _corroboratingSignals = new HashSet<string>
+        {
+            nameof(ScoringWeights.NameExact),
+            nameof(ScoringWeights.NameNormalized),
+            nameof(ScoringWeights.FilenameStemExact),
+            nameof(ScoringWeights.FilenameStemNormalized),
+            nameof(ScoringWeights.ParentFolderMatch),
+            nameof(ScoringWeights.GrandparentFolderMatch),
+        };
+
+        private const string IdentityLabel = "Identity — best match wins";
+        private const string CorroboratingLabel = "Corroborating — all matching stack";
+
         public ScoringReferenceDialog(string pluginId)
             : base(pluginId)
         {
@@ -33,24 +39,44 @@ namespace ListProtection.UI.Config
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
             => base.RunCommand(itemId, commandId, data);
 
-        // ── Build ──────────────────────────────────────────────────────────
-
         private static ScoringReferenceDialogUI Build()
         {
             var reference = ScoringWeights.GetScoringReference();
             var rows = new List<ScoringReferenceRow>();
 
+            // Collect the BaseItem (corroborating) signals once — emitted into every media type group
+            var baseItemSignals = new List<(string signal, int weight, string description)>();
+            if (reference.TryGetValue("All media types", out var baseItems))
+                baseItemSignals.AddRange(baseItems);
+
             foreach (var group in reference)
             {
                 var mediaType = group.Key;
+                if (mediaType == "All media types") continue; // handled by injection below
+
+                // Identity signals for this media type
                 foreach (var (signal, weight, description) in group.Value)
                 {
                     rows.Add(new ScoringReferenceRow
                     {
                         MediaType = mediaType,
+                        SignalType = IdentityLabel,
                         Score = weight,
                         Signal = signal,
-                        Description = description
+                        Description = description,
+                    });
+                }
+
+                // Corroborating signals — injected into every media type group
+                foreach (var (signal, weight, description) in baseItemSignals)
+                {
+                    rows.Add(new ScoringReferenceRow
+                    {
+                        MediaType = mediaType,
+                        SignalType = CorroboratingLabel,
+                        Score = weight,
+                        Signal = signal,
+                        Description = description,
                     });
                 }
             }

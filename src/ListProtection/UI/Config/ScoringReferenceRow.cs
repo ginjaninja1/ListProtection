@@ -2,14 +2,13 @@
 
 namespace ListProtection.UI.Config
 {
-    /// <summary>
-    /// A single row in the scoring reference dialog grid.
-    /// Column widths are applied via post-processing in ScoringReferenceDialogUI.Build.
-    /// </summary>
     public class ScoringReferenceRow
     {
         [DisplayName("Media Type")]
         public string MediaType { get; set; }
+
+        [DisplayName("Signal Type")]
+        public string SignalType { get; set; }
 
         [DisplayName("Score")]
         public int Score { get; set; }

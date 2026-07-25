@@ -25,7 +25,7 @@ namespace ListProtection.UI.PlaylistManagement
     public class PlaylistManagementUI : EditableOptionsBase
     {
         public override string EditorTitle => "Managed Playlists";
-        public override string EditorDescription => "Toggle protection on a playlist to track and repair its membership.";
+        public override string EditorDescription => "Toggle protection on a playlist to track its membership.";
 
 
         public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");

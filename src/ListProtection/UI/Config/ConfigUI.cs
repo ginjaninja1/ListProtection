@@ -10,8 +10,7 @@ namespace ListProtection.UI.Config
         public override string EditorTitle => "List Protection — Configuration";
 
         public override string EditorDescription =>
-            "Controls automatic repair and real-time protection behaviour. " +
-            "Changes take effect immediately.";
+            "";
 
         // ── Scoring Reference ──────────────────────────────────────────────
 
@@ -29,9 +28,7 @@ namespace ListProtection.UI.Config
 
         [DisplayName("Enable Auto-Repair")]
         [Description(
-            "When enabled, missing playlist members are automatically repaired when a " +
-            "candidate clears the score threshold, the minimum candidate distance, and the " +
-            "semantic gate for its media type. Leave disabled until you are satisfied with " +
+            "Missing playlist members are automatically repaired during event driven and scheduled analysis. Leave disabled until you are satisfied with " +
             "scoring results for your library.")]
         [AutoPostBack("updateconfig", nameof(AutoRepairEnabled))]
         public bool AutoRepairEnabled { get; set; } = false;

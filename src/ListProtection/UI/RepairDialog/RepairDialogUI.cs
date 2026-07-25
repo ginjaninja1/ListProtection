@@ -15,10 +15,9 @@ namespace ListProtection.UI.RepairDialog
         /// Informational label above the action buttons explaining what each one does.
         /// </summary>
         public LabelItem ActionNote { get; set; } = new LabelItem(
-            "These buttons are final — take care. " +
-            "Dismiss = accept the member is removed from the playlist. " +
-            "Considerate = respects the score threshold and minimum candidate distance set under Manual Repair in Configuration. " +
-            "Inconsiderate = selects the best candidate in any case.");
+            "Dismiss = accept the member is removed from the playlist (take care)." +
+            "Considerate = respects the configuration manual repair threshold. " +
+            "Inconsiderate/Row Repair = selects the best candidate in any case.");
 
         /// <summary>
         /// "Repair All (considerate)" — skips members whose top candidate does not

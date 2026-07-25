@@ -10,8 +10,18 @@ namespace ListProtection.UI.Config
         public override string EditorTitle => "List Protection — Configuration";
 
         public override string EditorDescription =>
-            "Controls automatic repair and candidate discovery behaviour. " +
+            "Controls automatic repair and real-time protection behaviour. " +
             "Changes take effect immediately.";
+
+        // ── Scoring Reference ──────────────────────────────────────────────
+
+        [DisplayName("Scoring Reference")]
+        [Description("View signal weights used to score replacement candidates for all media types.")]
+        public ButtonItem ViewScoringReference { get; set; } = new ButtonItem
+        {
+            CommandId = "viewscoring",
+            Caption = "View Scoring Reference"
+        };
 
         // ── Auto-Repair ────────────────────────────────────────────────────
 
@@ -41,22 +51,20 @@ namespace ListProtection.UI.Config
         [AutoPostBack("updateconfig", nameof(AutoRepairMinCandidateDistance))]
         public int AutoRepairMinCandidateDistance { get; set; } = 50;
 
-        [DisplayName("Scoring Reference")]
-        [Description("Open the signal weight reference for all media types.")]
-        [AutoPostBack("viewscoring", nameof(ViewScoringReference))]
-        public bool ViewScoringReference { get; set; } = false;
+        // ── Real-time Protection ───────────────────────────────────────────
 
-        // ── Candidate Discovery ────────────────────────────────────────────
+        
+        public CaptionItem RealTimeHeading { get; set; } = new CaptionItem("Real-time Protection");
 
-        public CaptionItem DiscoveryHeading { get; set; } = new CaptionItem("Candidate Discovery");
+        public LabelItem RealTimeCaption { get; set; } = new LabelItem("Optional, more responsive event drive repair. Alternatively, rely on just the scheduled task.");
 
-        [DisplayName("Auto-Discover Candidates on Detection")]
+        [DisplayName("Event Driven Repair")]
         [Description(
-            "When enabled, candidate discovery runs automatically after missing members " +
-            "are detected. When disabled, discovery only runs on the scheduled daily sweep " +
-            "or a manual task trigger from the Emby dashboard.")]
-        [AutoPostBack("updateconfig", nameof(AutoDiscoverCandidates))]
-        public bool AutoDiscoverCandidates { get; set; } = true;
+            "When enabled, missing member detection and candidate discovery run in response " +
+            "to library events such as file renames and folder changes. When disabled, protection " +
+            "relies solely on the scheduled post-scan and daily sweep tasks.")]
+        [AutoPostBack("updateconfig", nameof(EventDrivenRepairEnabled))]
+        public bool EventDrivenRepairEnabled { get; set; } = true;
 
         // ── Duration Tolerances ────────────────────────────────────────────
 

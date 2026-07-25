@@ -9,7 +9,7 @@ namespace ListProtection.UI.Config
     /// <summary>
     /// Read-only full-height dialog grid showing signal weights for all media types.
     /// Extends EditableObjectBase — matches the dialog UI pattern (GroundTruthDialogUI).
-    /// No editable columns, no onChangeCommand.
+    /// No editable columns, no onChangeCommand, no search or filter rows.
     /// </summary>
     public class ScoringReferenceDialogUI : EditableObjectBase
     {
@@ -25,10 +25,10 @@ namespace ListProtection.UI.Config
             var options = new DxGridOptions(
                 new ScoringReferenceRow(),
                 "Score",
-                false,
-                true,
-                true,   // search
-                true)   // filter
+                false,  // allowEdit
+                true,   // allowSelect
+                false,  // search
+                false)  // filter
             {
                 heightMode = DxGridOptions.GridHeightMode.fullHeight,
                 columnAutoWidth = true
@@ -53,7 +53,7 @@ namespace ListProtection.UI.Config
                         col.groupIndex = 0;
                         col.showWhenGrouped = false;
                         col.autoExpandGroup = true;
-                        col.allowHeaderFiltering = true;
+                        col.allowHeaderFiltering = false;
                     }
 
                     if (col.dataField == "Signal")

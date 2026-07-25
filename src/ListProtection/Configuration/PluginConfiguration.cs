@@ -33,13 +33,15 @@ namespace ListProtection.Configuration
         /// </summary>
         public int AutoRepairMinCandidateDistance { get; set; } = 50;
 
-        // ── Candidate Discovery ────────────────────────────────────────────
+        // ── Real-time Protection ───────────────────────────────────────────
 
         /// <summary>
-        /// When true, discovery runs automatically after detection events.
-        /// When false, only runs on the scheduled daily sweep or manual trigger.
+        /// When true, missing member detection and candidate discovery run in response
+        /// to library events (file/folder changes). When false, protection relies
+        /// solely on the scheduled tasks (PostScanDetectTask, PostScanCandidateTask,
+        /// and the daily sweeps). Defaults to true.
         /// </summary>
-        public bool AutoDiscoverCandidates { get; set; } = true;
+        public bool EventDrivenRepairEnabled { get; set; } = true;
 
         // ── Duration tolerances (per media type, in seconds) ───────────────
 

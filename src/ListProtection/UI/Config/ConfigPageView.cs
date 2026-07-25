@@ -29,7 +29,7 @@ namespace ListProtection.UI.Config
                 config.AutoRepairEnabled = Config.AutoRepairEnabled;
                 config.AutoRepairScoreThreshold = Config.AutoRepairScoreThreshold;
                 config.AutoRepairMinCandidateDistance = Config.AutoRepairMinCandidateDistance;
-                config.AutoDiscoverCandidates = Config.AutoDiscoverCandidates;
+                config.EventDrivenRepairEnabled = Config.EventDrivenRepairEnabled;
                 config.AudioDurationToleranceSeconds = Config.AudioDurationToleranceSeconds;
                 config.EpisodeDurationToleranceSeconds = Config.EpisodeDurationToleranceSeconds;
                 config.MovieDurationToleranceSeconds = Config.MovieDurationToleranceSeconds;
@@ -39,7 +39,7 @@ namespace ListProtection.UI.Config
                 return Task.FromResult((IPluginUIView)this);
             }
 
-            if (commandId == "viewscoring" || itemId == "viewscoring")
+            if (commandId == "viewscoring")
             {
                 var dialog = new ScoringReferenceDialog(PluginId);
                 return Task.FromResult((IPluginUIView)dialog);
@@ -53,7 +53,7 @@ namespace ListProtection.UI.Config
             AutoRepairEnabled = config.AutoRepairEnabled,
             AutoRepairScoreThreshold = config.AutoRepairScoreThreshold,
             AutoRepairMinCandidateDistance = config.AutoRepairMinCandidateDistance,
-            AutoDiscoverCandidates = config.AutoDiscoverCandidates,
+            EventDrivenRepairEnabled = config.EventDrivenRepairEnabled,
             AudioDurationToleranceSeconds = config.AudioDurationToleranceSeconds,
             EpisodeDurationToleranceSeconds = config.EpisodeDurationToleranceSeconds,
             MovieDurationToleranceSeconds = config.MovieDurationToleranceSeconds,

@@ -15,6 +15,11 @@ namespace ListProtection.EntryPoints
     /// <summary>
     /// IServerEntryPoint — real-time missing member detection.
     ///
+    /// All event paths are gated behind EventDrivenRepairEnabled in config.
+    /// When disabled, this service subscribes to events but exits each handler
+    /// immediately, so the scheduled tasks (PostScanDetectTask, PostScanCandidateTask,
+    /// daily sweeps) become the sole protection mechanism.
+    ///
     /// Three fast paths, all proven by probe:
     ///
     ///   1. ItemRemoved (Type=Audio)
@@ -57,7 +62,6 @@ namespace ListProtection.EntryPoints
     /// Auto-repair:
     ///   After candidate discovery, if AutoRepairEnabled is true in config,
     ///   AutoRepairer.RunAutoRepair is called for the affected playlists.
-    ///   AutoDiscoverCandidates in config controls whether discovery is queued at all.
     /// </summary>
     public class MissingMemberDetectionService : IServerEntryPoint
     {
@@ -97,13 +101,31 @@ namespace ListProtection.EntryPoints
             _libraryManager.ItemUpdated += OnItemUpdated;
             _providerManager.RefreshCompleted += OnRefreshCompleted;
 
-            _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + RefreshCompleted active");
+            _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + ItemUpdated + RefreshCompleted active");
+        }
+
+        // ── Config gate ────────────────────────────────────────────────────
+
+        private bool IsEventDrivenRepairEnabled()
+        {
+            try
+            {
+                var config = ListProtectionPlugin.Instance?.Configuration;
+                // Default true — safe to run if config is unavailable
+                return config == null || config.EventDrivenRepairEnabled;
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         // ── ItemRemoved ────────────────────────────────────────────────────
 
         private void OnItemRemoved(object sender, ItemChangeEventArgs e)
         {
+            if (!IsEventDrivenRepairEnabled()) return;
+
             try
             {
                 var item = e?.Item;
@@ -155,8 +177,7 @@ namespace ListProtection.EntryPoints
                     playlistId);
                 MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
 
-                if (IsAutoDiscoverEnabled())
-                    QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
+                QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
             }
         }
 
@@ -211,8 +232,7 @@ namespace ListProtection.EntryPoints
                     playlistId);
                 MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
 
-                if (IsAutoDiscoverEnabled())
-                    QueueCandidateDiscovery(discoveryKey, playlistId);
+                QueueCandidateDiscovery(discoveryKey, playlistId);
             }
         }
 
@@ -220,6 +240,8 @@ namespace ListProtection.EntryPoints
 
         private void OnItemAdded(object sender, ItemChangeEventArgs e)
         {
+            if (!IsEventDrivenRepairEnabled()) return;
+
             try
             {
                 var item = e?.Item;
@@ -231,8 +253,6 @@ namespace ListProtection.EntryPoints
 
                 if (string.IsNullOrEmpty(item.Path)) return;
 
-                if (!IsAutoDiscoverEnabled()) return;
-
                 var plugin = ListProtectionPlugin.Instance;
                 if (plugin == null) return;
 
@@ -243,16 +263,17 @@ namespace ListProtection.EntryPoints
                 _logger.ErrorException("[MissingMemberDetectionService] OnItemAdded failed", ex);
             }
         }
+
         private void OnItemUpdated(object sender, ItemChangeEventArgs e)
         {
+            if (!IsEventDrivenRepairEnabled()) return;
+
             try
             {
                 var item = e?.Item;
                 if (item == null) return;
 
                 if (item.GetType().Name != "Audio") return;
-
-                if (!IsAutoDiscoverEnabled()) return;
 
                 var plugin = ListProtectionPlugin.Instance;
                 if (plugin == null) return;
@@ -304,6 +325,7 @@ namespace ListProtection.EntryPoints
                     "[MissingMemberDetectionService] OnItemUpdated failed", ex);
             }
         }
+
         /// <summary>
         /// PROVEN path — folder added/restored.
         /// Matches when the added folder's PARENT directory equals the parent
@@ -388,6 +410,10 @@ namespace ListProtection.EntryPoints
         /// </summary>
         private void OnRefreshCompleted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
+            // RefreshCompleted is always checked — the pending queue may have been
+            // populated before EventDrivenRepairEnabled was toggled off, and we must
+            // drain it to avoid stale queue entries accumulating indefinitely.
+            // No new entries are added when disabled (all OnItemX handlers gate early).
             try
             {
                 var refreshedItem = e?.Argument?.Item;
@@ -472,27 +498,13 @@ namespace ListProtection.EntryPoints
             }
         }
 
-        // ── Config helpers ─────────────────────────────────────────────────
-
-        private bool IsAutoDiscoverEnabled()
-        {
-            try
-            {
-                var config = ListProtectionPlugin.Instance?.Configuration;
-                return config == null || config.AutoDiscoverCandidates;
-            }
-            catch
-            {
-                return true;
-            }
-        }
-
         // ── Cleanup ────────────────────────────────────────────────────────
 
         public void Dispose()
         {
             _libraryManager.ItemRemoved -= OnItemRemoved;
             _libraryManager.ItemAdded -= OnItemAdded;
+            _libraryManager.ItemUpdated -= OnItemUpdated;
             _providerManager.RefreshCompleted -= OnRefreshCompleted;
             _logger.Info("[MissingMemberDetectionService] Disposed");
         }

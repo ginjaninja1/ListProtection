@@ -14,18 +14,14 @@ using System.Threading.Tasks;
 namespace ListProtection.UI.RepairDialog
 {
     /// <summary>
-    /// Full-screen dialog showing missing members and candidates for a single
-    /// playlist. Launched from Tab 1 when OpenRepair is ticked on a playlist row.
-    ///
-    /// Extends PluginDialogView — mirrors FullScreenArtistDialogView pattern.
+    /// Full-screen dialog showing missing members and candidates for a single playlist.
     ///
     /// commandId routing:
     ///   "RepairDialogMasterChanged"     — RepairMember or DismissMember ticked
-    ///   "RepairDialogCandidateChanged"  — Repair ticked on a candidate row
-    ///   anything else                   — delegate to base.RunCommand (closes dialog)
-    ///
-    /// IMPORTANT: base.RunCommand must be called for unhandled commands —
-    /// that is what closes the dialog and routes back to the parent view.
+    ///   "RepairDialogCandidateChanged"  — Repair ticked on a candidate row (inconsiderate)
+    ///   "RepairAll"                     — Inconsiderate: best candidate for every member
+    ///   "RepairAllConsiderate"          — Considerate: respects manual repair threshold + distance
+    ///   "DismissAll"                    — Dismiss all missing members
     /// </summary>
     internal sealed class RepairDialogView : PluginDialogView
     {
@@ -41,8 +37,6 @@ namespace ListProtection.UI.RepairDialog
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
 
-        // In-memory row state — mutated as repairs/dismissals happen,
-        // rebuilt from stores on each command so the view stays in sync.
         private MissingMemberRow[] _rows;
 
         public RepairDialogView(
@@ -110,7 +104,12 @@ namespace ListProtection.UI.RepairDialog
                         return this;
 
                     case "RepairAll":
-                        await HandleRepairAll();
+                        await HandleRepairAll(considerate: false);
+                        _rebuildParentContent();
+                        return _parentPageView;
+
+                    case "RepairAllConsiderate":
+                        await HandleRepairAll(considerate: true);
                         _rebuildParentContent();
                         return _parentPageView;
 
@@ -125,12 +124,10 @@ namespace ListProtection.UI.RepairDialog
                 _logger.ErrorException("[RepairDialogView] RunCommand failed", ex);
             }
 
-            // Unknown command (including "DialogCancel") — delegate to base
-            // so the framework can close the dialog and return to parent.
             return await base.RunCommand(itemId, commandId, data);
         }
 
-        // ── Master changed: RepairMember or DismissMember ──────────────────
+        // ── Master changed ─────────────────────────────────────────────────
 
         private async Task HandleMasterChanged(string data)
         {
@@ -149,8 +146,6 @@ namespace ListProtection.UI.RepairDialog
 
             if (incoming?.MissingMemberRows == null) return;
 
-            // RepairMember: find rows where RepairMember=true, build repair rows
-            // using the strongest candidate for each, delegate to PlaylistRepairService
             var toRepair = incoming.MissingMemberRows
                 .Where(r => r.RepairMember && !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
                 .ToArray();
@@ -158,12 +153,12 @@ namespace ListProtection.UI.RepairDialog
             if (toRepair.Length > 0)
             {
                 _logger.Info("[RepairDialogView] RepairMember triggered for {0} row(s)", toRepair.Length);
-                var repairRows = BuildRepairRowsForMembers(toRepair.Select(r => r.Key).ToArray());
+                // Per-row repair checkbox is always inconsiderate — user is looking at the candidate
+                var repairRows = BuildRepairRowsForMembers(toRepair.Select(r => r.Key).ToArray(), considerate: false);
                 if (repairRows.Length > 0)
                     await _repairService.ExecuteRepairs(repairRows);
             }
 
-            // DismissMember: find rows where DismissMember=true, dismiss each
             var toDismiss = incoming.MissingMemberRows
                 .Where(r => r.DismissMember && !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
                 .ToArray();
@@ -175,7 +170,7 @@ namespace ListProtection.UI.RepairDialog
             }
         }
 
-        // ── Candidate changed: Repair this specific candidate ───────────────
+        // ── Candidate changed (always inconsiderate — user chose the row) ──
 
         private async Task HandleCandidateChanged(string data)
         {
@@ -194,7 +189,6 @@ namespace ListProtection.UI.RepairDialog
 
             if (incoming?.MissingMemberRows == null) return;
 
-            // Build MissingMemberRow[] with only the ticked candidate marked Repair=true
             var repairRows = new List<MissingMemberRow>();
 
             foreach (var masterRow in incoming.MissingMemberRows)
@@ -224,12 +218,58 @@ namespace ListProtection.UI.RepairDialog
                 await _repairService.ExecuteRepairs(repairRows.ToArray());
         }
 
+        // ── Repair All ────────────────────────────────────────────────────
+
+        private async Task HandleRepairAll(bool considerate)
+        {
+            _logger.Info("[RepairDialogView] RepairAll triggered | considerate={0}", considerate);
+
+            var allKeys = _rows
+                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
+                .Select(r => r.Key)
+                .ToArray();
+
+            if (allKeys.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] RepairAll — no repairable rows");
+                return;
+            }
+
+            var repairRows = BuildRepairRowsForMembers(allKeys, considerate);
+
+            if (repairRows.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] RepairAll — no candidates available (after filtering)");
+                return;
+            }
+
+            _logger.Info("[RepairDialogView] RepairAll — executing {0} repair(s)", repairRows.Length);
+            await _repairService.ExecuteRepairs(repairRows);
+        }
+
+        // ── Dismiss All ───────────────────────────────────────────────────
+
+        private void HandleDismissAll()
+        {
+            _logger.Info("[RepairDialogView] DismissAll triggered");
+
+            var allKeys = _rows
+                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
+                .Select(r => r.Key)
+                .ToArray();
+
+            if (allKeys.Length == 0)
+            {
+                _logger.Info("[RepairDialogView] DismissAll — no dismissable rows");
+                return;
+            }
+
+            _logger.Info("[RepairDialogView] DismissAll — dismissing {0} row(s)", allKeys.Length);
+            DismissMembers(allKeys);
+        }
+
         // ── Dismiss helpers ────────────────────────────────────────────────
 
-        /// <summary>
-        /// Removes the specified members from MissingMembersStore and GroundTruthStore.
-        /// Keys are "{PlaylistId}_{InternalId}" format.
-        /// </summary>
         private void DismissMembers(string[] keys)
         {
             var missingRecords = _missingMembersStore.Load();
@@ -258,7 +298,6 @@ namespace ListProtection.UI.RepairDialog
                     "[RepairDialogView] Dismissing member | playlist={0} | InternalId={1}",
                     playlistId, internalId);
 
-                // Remove from MissingMembersStore
                 for (var i = missingRecords.Count - 1; i >= 0; i--)
                 {
                     var r = missingRecords[i];
@@ -271,7 +310,6 @@ namespace ListProtection.UI.RepairDialog
                     }
                 }
 
-                // Remove from GroundTruthStore
                 if (groundTruth.TryGetValue(playlistId, out var entry) && entry.Members != null)
                 {
                     for (var i = entry.Members.Count - 1; i >= 0; i--)
@@ -286,7 +324,6 @@ namespace ListProtection.UI.RepairDialog
                     }
                 }
 
-                // Remove candidates for this member
                 for (var i = candidateRecords.Count - 1; i >= 0; i--)
                 {
                     var c = candidateRecords[i];
@@ -304,66 +341,6 @@ namespace ListProtection.UI.RepairDialog
         }
 
         // ── Row builders ───────────────────────────────────────────────────
-
-        // ── Dismiss All ───────────────────────────────────────────────────
-
-        /// <summary>
-        /// Dismisses all missing members for this playlist — removes from
-        /// MissingMembersStore, GroundTruthStore, and CandidateStore.
-        /// Uses current in-memory _rows as source.
-        /// </summary>
-        private void HandleDismissAll()
-        {
-            _logger.Info("[RepairDialogView] DismissAll triggered");
-
-            var allKeys = _rows
-                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
-                .Select(r => r.Key)
-                .ToArray();
-
-            if (allKeys.Length == 0)
-            {
-                _logger.Info("[RepairDialogView] DismissAll — no dismissable rows");
-                return;
-            }
-
-            _logger.Info("[RepairDialogView] DismissAll — dismissing {0} row(s)", allKeys.Length);
-            DismissMembers(allKeys);
-        }
-
-        // ── Repair All ────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Applies the highest-scoring candidate to every missing member that has one.
-        /// Uses the current in-memory _rows as the source — no data deserialisation needed
-        /// since the button fires with the full UI payload but we only need server state.
-        /// </summary>
-        private async Task HandleRepairAll()
-        {
-            _logger.Info("[RepairDialogView] RepairAll triggered");
-
-            var allKeys = _rows
-                .Where(r => !r.IsSynthetic && !string.IsNullOrEmpty(r.Key))
-                .Select(r => r.Key)
-                .ToArray();
-
-            if (allKeys.Length == 0)
-            {
-                _logger.Info("[RepairDialogView] RepairAll — no repairable rows");
-                return;
-            }
-
-            var repairRows = BuildRepairRowsForMembers(allKeys);
-
-            if (repairRows.Length == 0)
-            {
-                _logger.Info("[RepairDialogView] RepairAll — no candidates available for any row");
-                return;
-            }
-
-            _logger.Info("[RepairDialogView] RepairAll — executing {0} repair(s)", repairRows.Length);
-            await _repairService.ExecuteRepairs(repairRows);
-        }
 
         private void Refresh()
         {
@@ -437,15 +414,27 @@ namespace ListProtection.UI.RepairDialog
         }
 
         /// <summary>
-        /// For RepairMember: builds MissingMemberRow[] with the strongest candidate
-        /// marked Repair=true, ready for PlaylistRepairService.ExecuteRepairs.
-        /// Keys are "{PlaylistId}_{InternalId}".
+        /// Builds repair rows for the given member keys, selecting the best candidate.
+        /// When <paramref name="considerate"/> is true, applies the manual repair score
+        /// threshold and minimum candidate distance from PluginConfiguration — members
+        /// whose best candidate fails either check are skipped.
+        /// When false (inconsiderate), picks the top candidate unconditionally.
         /// </summary>
-        private MissingMemberRow[] BuildRepairRowsForMembers(string[] keys)
+        private MissingMemberRow[] BuildRepairRowsForMembers(string[] keys, bool considerate)
         {
             var missingRecords = _missingMembersStore.Load();
             var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();
             var rows = new List<MissingMemberRow>();
+
+            int threshold = 0;
+            int minDistance = 0;
+
+            if (considerate)
+            {
+                var config = ListProtectionPlugin.Instance.Configuration;
+                threshold = config.ManualRepairScoreThreshold;
+                minDistance = config.ManualRepairMinCandidateDistance;
+            }
 
             foreach (var key in keys)
             {
@@ -457,21 +446,46 @@ namespace ListProtection.UI.RepairDialog
                     r.PlaylistId == playlistId && r.Member?.InternalId == internalId);
                 if (record == null) continue;
 
-                var best = candidateRecords
+                var ranked = candidateRecords
                     .Where(c => c.PlaylistId == playlistId && c.MissingMember?.InternalId == internalId)
                     .OrderByDescending(c => c.Score)
-                    .FirstOrDefault();
+                    .ToList();
 
-                if (best == null)
+                if (ranked.Count == 0)
                 {
                     _logger.Info(
-                        "[RepairDialogView] RepairMember — no candidates for '{0}', skipping",
+                        "[RepairDialogView] BuildRepairRows — no candidates for '{0}', skipping",
                         record.Member.Name ?? "(null)");
                     continue;
                 }
 
+                var best = ranked[0];
+
+                if (considerate)
+                {
+                    if (best.Score < threshold)
+                    {
+                        _logger.Info(
+                            "[RepairDialogView] Considerate skip (score {0} < threshold {1}) for '{2}'",
+                            best.Score, threshold, record.Member.Name ?? "(null)");
+                        continue;
+                    }
+
+                    if (minDistance > 0 && ranked.Count >= 2)
+                    {
+                        var distance = best.Score - ranked[1].Score;
+                        if (distance < minDistance)
+                        {
+                            _logger.Info(
+                                "[RepairDialogView] Considerate skip (distance {0} < minDistance {1}) for '{2}'",
+                                distance, minDistance, record.Member.Name ?? "(null)");
+                            continue;
+                        }
+                    }
+                }
+
                 _logger.Info(
-                    "[RepairDialogView] RepairMember — selecting '{0}' (score={1}) for '{2}'",
+                    "[RepairDialogView] BuildRepairRows — selecting '{0}' (score={1}) for '{2}'",
                     best.CandidateName ?? "(null)", best.Score, record.Member.Name ?? "(null)");
 
                 rows.Add(new MissingMemberRow

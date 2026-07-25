@@ -51,9 +51,26 @@ namespace ListProtection.UI.Config
         [AutoPostBack("updateconfig", nameof(AutoRepairMinCandidateDistance))]
         public int AutoRepairMinCandidateDistance { get; set; } = 50;
 
+        // ── Manual Repair ──────────────────────────────────────────────────
+
+        public CaptionItem ManualRepairHeading { get; set; } = new CaptionItem("Manual Repair");
+
+        [DisplayName("Score Threshold")]
+        [Description(
+            "Minimum score a candidate must achieve for 'Repair All (considerate)' to act on it. " +
+            "Members whose best candidate falls below this score are skipped and left for per-row review. Default: 100.")]
+        [AutoPostBack("updateconfig", nameof(ManualRepairScoreThreshold))]
+        public int ManualRepairScoreThreshold { get; set; } = 100;
+
+        [DisplayName("Minimum Candidate Distance")]
+        [Description(
+            "Minimum score gap required between the top and second-best candidate before " +
+            "'Repair All (considerate)' will proceed. Set to 0 to disable the gap check. Default: 30.")]
+        [AutoPostBack("updateconfig", nameof(ManualRepairMinCandidateDistance))]
+        public int ManualRepairMinCandidateDistance { get; set; } = 30;
+
         // ── Real-time Protection ───────────────────────────────────────────
 
-        
         public CaptionItem RealTimeHeading { get; set; } = new CaptionItem("Real-time Protection");
 
         public LabelItem RealTimeCaption { get; set; } = new LabelItem("Optional, more responsive event drive repair. Alternatively, rely on just the scheduled task.");

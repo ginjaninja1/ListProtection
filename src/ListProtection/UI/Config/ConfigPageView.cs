@@ -29,6 +29,8 @@ namespace ListProtection.UI.Config
                 config.AutoRepairEnabled = Config.AutoRepairEnabled;
                 config.AutoRepairScoreThreshold = Config.AutoRepairScoreThreshold;
                 config.AutoRepairMinCandidateDistance = Config.AutoRepairMinCandidateDistance;
+                config.ManualRepairScoreThreshold = Config.ManualRepairScoreThreshold;
+                config.ManualRepairMinCandidateDistance = Config.ManualRepairMinCandidateDistance;
                 config.EventDrivenRepairEnabled = Config.EventDrivenRepairEnabled;
                 config.AudioDurationToleranceSeconds = Config.AudioDurationToleranceSeconds;
                 config.EpisodeDurationToleranceSeconds = Config.EpisodeDurationToleranceSeconds;
@@ -53,6 +55,8 @@ namespace ListProtection.UI.Config
             AutoRepairEnabled = config.AutoRepairEnabled,
             AutoRepairScoreThreshold = config.AutoRepairScoreThreshold,
             AutoRepairMinCandidateDistance = config.AutoRepairMinCandidateDistance,
+            ManualRepairScoreThreshold = config.ManualRepairScoreThreshold,
+            ManualRepairMinCandidateDistance = config.ManualRepairMinCandidateDistance,
             EventDrivenRepairEnabled = config.EventDrivenRepairEnabled,
             AudioDurationToleranceSeconds = config.AudioDurationToleranceSeconds,
             EpisodeDurationToleranceSeconds = config.EpisodeDurationToleranceSeconds,

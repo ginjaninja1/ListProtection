@@ -33,6 +33,23 @@ namespace ListProtection.Configuration
         /// </summary>
         public int AutoRepairMinCandidateDistance { get; set; } = 50;
 
+        // ── Manual Repair ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// Minimum composite score a candidate must reach for "Repair All (considerate)"
+        /// to act on it. Members whose best candidate falls below this score are skipped
+        /// and left for per-row manual repair. Default: 100.
+        /// </summary>
+        public int ManualRepairScoreThreshold { get; set; } = 100;
+
+        /// <summary>
+        /// Minimum score gap between the top and second-best candidate required for
+        /// "Repair All (considerate)" to proceed. A gap smaller than this means the
+        /// repair is ambiguous and the member is skipped. Set to 0 to disable.
+        /// Default: 30.
+        /// </summary>
+        public int ManualRepairMinCandidateDistance { get; set; } = 30;
+
         // ── Real-time Protection ───────────────────────────────────────────
 
         /// <summary>

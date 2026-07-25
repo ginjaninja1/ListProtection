@@ -7,43 +7,42 @@ using System;
 
 namespace ListProtection.UI.RepairDialog
 {
-    /// <summary>
-    /// Full-screen dialog UI for repairing a single playlist's missing members.
-    /// Extends EditableObjectBase (not EditableOptionsBase) — matches the
-    /// MetadataChecker dialog pattern (ShowPlaylistStreamsUi).
-    ///
-    /// Master grid: one row per missing member.
-    ///   Editable columns: RepairMember (repair via strongest candidate),
-    ///                     DismissMember (stop tracking this member)
-    ///   Read-only: MemberName, Path, DetectedAt
-    ///   Hidden:    Key, IsSynthetic, Forget, PlaylistName, Candidates (data source)
-    ///
-    /// Detail grid: candidate rows for the expanded missing member.
-    ///   Editable columns: Repair (use this specific candidate)
-    ///   Read-only: CandidateName, CandidatePath, Score, Signals
-    ///   Hidden:    Key
-    ///
-    /// commandIds:
-    ///   Master edits  → "RepairDialogMasterChanged"
-    ///   Candidate edits → "RepairDialogCandidateChanged"
-    /// </summary>
     public class RepairDialogUI : EditableObjectBase
     {
         public override string EditorTitle => null;
 
         /// <summary>
-        /// "Repair All" button — applies the highest-scoring candidate to every
-        /// missing member in one action. Fires commandId "RepairAll".
-        /// Declared before the grid so it renders above it.
+        /// Informational label above the action buttons explaining what each one does.
         /// </summary>
-        public ButtonItem RepairAllButton { get; set; } = new ButtonItem("Repair All")
+        public LabelItem ActionNote { get; set; } = new LabelItem(
+            "These buttons are final — take care. " +
+            "Dismiss = accept the member is removed from the playlist. " +
+            "Considerate = respects the score threshold and minimum candidate distance set under Manual Repair in Configuration. " +
+            "Inconsiderate = selects the best candidate in any case.");
+
+        /// <summary>
+        /// "Repair All (considerate)" — skips members whose top candidate does not
+        /// clear the manual repair score threshold and distance. Fires commandId "RepairAllConsiderate".
+        /// Rendered to the left of the inconsiderate button.
+        /// </summary>
+        public ButtonItem RepairAllConsiderateButton { get; set; } = new ButtonItem("Repair All (considerate)")
+        {
+            StandardIcon = StandardIcons.Add,
+            CommandId = "RepairAllConsiderate"
+        };
+
+        /// <summary>
+        /// "Repair All (inconsiderate)" — applies the highest-scoring candidate to every
+        /// missing member regardless of score or distance. Fires commandId "RepairAll".
+        /// </summary>
+        public ButtonItem RepairAllButton { get; set; } = new ButtonItem("Repair All (inconsiderate)")
         {
             StandardIcon = StandardIcons.Add,
             CommandId = "RepairAll"
         };
 
         /// <summary>
-        /// "Dismiss All" button — removes all missing members from tracking in one action.
+        /// "Dismiss All" — removes all missing members from tracking.
         /// Fires commandId "DismissAll".
         /// </summary>
         public ButtonItem DismissAllButton { get; set; } = new ButtonItem("Dismiss All")

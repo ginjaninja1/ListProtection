@@ -8,26 +8,14 @@ namespace ListProtection.UI.Config
 {
     internal sealed class ScoringReferenceDialog : PluginDialogView
     {
-        private static readonly HashSet<string> _corroboratingSignals = new HashSet<string>
-        {
-            nameof(ScoringWeights.NameExact),
-            nameof(ScoringWeights.NameNormalized),
-            nameof(ScoringWeights.FilenameStemExact),
-            nameof(ScoringWeights.FilenameStemNormalized),
-            nameof(ScoringWeights.ParentFolderMatch),
-            nameof(ScoringWeights.GrandparentFolderMatch),
-        };
-
         private const string IdentityLabel = "Identity — best match wins";
         private const string CorroboratingLabel = "Corroborating — all matching stack";
 
-        public ScoringReferenceDialog(string pluginId)
-            : base(pluginId)
+        public ScoringReferenceDialog(string pluginId) : base(pluginId)
         {
             ShowDialogFullScreen = true;
             AllowOk = false;
             AllowCancel = true;
-
             ContentData = Build();
         }
 
@@ -41,47 +29,60 @@ namespace ListProtection.UI.Config
 
         private static ScoringReferenceDialogUI Build()
         {
-            var reference = ScoringWeights.GetScoringReference();
             var rows = new List<ScoringReferenceRow>();
 
-            // Collect the BaseItem (corroborating) signals once — emitted into every media type group
-            var baseItemSignals = new List<(string signal, int weight, string description)>();
-            if (reference.TryGetValue("All media types", out var baseItems))
-                baseItemSignals.AddRange(baseItems);
+            // ── Tier 1 — media-type content rules (identity, best match wins) ──
+            AddRules(rows, "Audio", ScoringWeights.AudioRules, IdentityLabel);
+            AddRules(rows, "Episode", ScoringWeights.EpisodeRules, IdentityLabel);
+            AddRules(rows, "Movie", ScoringWeights.MovieRules, IdentityLabel);
 
-            foreach (var group in reference)
+            // ── Tier 3 — fallback rules injected into every media type ─────────
+            foreach (var mediaType in new[] { "Audio", "Episode", "Movie" })
+                AddRules(rows, mediaType, ScoringWeights.FallbackRules, CorroboratingLabel);
+
+            // ── Tier 2 — folder depth (corroborating, always stacks) ───────────
+            for (var depth = 1; depth <= FolderEvidenceCollector.MaxDepth; depth++)
             {
-                var mediaType = group.Key;
-                if (mediaType == "All media types") continue; // handled by injection below
+                var cumulative = FolderFacts.CumulativeWeightForDepth(depth);
+                var marginal = FolderFacts.WeightForDepth(depth);
 
-                // Identity signals for this media type
-                foreach (var (signal, weight, description) in group.Value)
-                {
-                    rows.Add(new ScoringReferenceRow
-                    {
-                        MediaType = mediaType,
-                        SignalType = IdentityLabel,
-                        Score = weight,
-                        Signal = signal,
-                        Description = description,
-                    });
-                }
-
-                // Corroborating signals — injected into every media type group
-                foreach (var (signal, weight, description) in baseItemSignals)
+                foreach (var mediaType in new[] { "Audio", "Episode", "Movie" })
                 {
                     rows.Add(new ScoringReferenceRow
                     {
                         MediaType = mediaType,
                         SignalType = CorroboratingLabel,
-                        Score = weight,
-                        Signal = signal,
-                        Description = description,
+                        Score = marginal,
+                        Signal = FolderFacts.Depth(depth),
+                        Description = "Folder depth " + depth +
+                                      " — " + depth + " consecutive ancestor name(s) match GT path" +
+                                      " (cumulative total: " + cumulative + ")"
                     });
                 }
             }
 
             return ScoringReferenceDialogUI.Build(rows.ToArray());
+        }
+
+        private static void AddRules(
+            List<ScoringReferenceRow> rows,
+            string mediaType,
+            List<ScoringRule> rules,
+            string signalType)
+        {
+            foreach (var rule in rules)
+            {
+                rows.Add(new ScoringReferenceRow
+                {
+                    MediaType = mediaType,
+                    SignalType = signalType,
+                    Score = rule.Score,
+                    Signal = string.Join(" + ", rule.RequiredFacts),
+                    Description = signalType == IdentityLabel
+                        ? "First matching rule fires — higher rules take precedence"
+                        : "Fires when ContentScore == 0 (no Tier 1 rule matched)"
+                });
+            }
         }
     }
 }

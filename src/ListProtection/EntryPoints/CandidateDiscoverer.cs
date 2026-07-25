@@ -14,53 +14,26 @@ namespace ListProtection.EntryPoints
     /// (MissingMemberDetectionService), PostScanCandidateTask, and the manual
     /// CandidateDiscoveryTask dashboard task.
     ///
-    /// Static — all state lives in the plugin stores.
+    /// Scoring architecture — three tiers:
+    ///   Tier 1 — Media-type collector (Audio/Episode/Movie) emits atomic facts.
+    ///             CandidateScorer applies prioritised rule table → ContentScore.
+    ///   Tier 2 — FolderEvidenceCollector emits depth facts. Always runs.
+    ///             Contributes LocationScore only when ContentScore > 0 or FallbackScore > 0.
+    ///   Tier 3 — FallbackEvidenceCollector emits name/filename facts.
+    ///             Consulted only when ContentScore == 0 → FallbackScore.
     ///
-    /// Architecture:
-    ///   Evidence collection and scoring are fully separated from the discovery loop.
-    ///   BaseItemEvidenceCollector runs for all item types.
-    ///   AudioEvidenceCollector chains on top when gt.MediaType == "Audio".
-    ///   CandidateScorer is stateless — it sums EvidenceFact weights from ScoringWeights.
-    ///
-    /// Candidate cap:
-    ///   At most 3 candidates are retained per (PlaylistId, MissingMember) pair —
-    ///   the 3 highest-scoring. This keeps the store focused and the UI uncluttered.
-    ///   On each discovery run, lower-scoring candidates are evicted if a better one
-    ///   arrives and there is already a full set of 3.
-    ///
-    /// Deduplication:
-    ///   If a (PlaylistId, MissingMember.InternalId, CandidateInternalId) triple already
-    ///   exists and the new score is higher, the stored record is updated (score +
-    ///   signals + LastScoredAt). If the new score is equal or lower, the record is
-    ///   left unchanged. This means CandidateRefreshTask re-runs are always meaningful.
-    ///
-    /// Candidate pool:
-    ///   Items are queried by MediaType from the GT member. Legacy GT members with a
-    ///   null MediaType fall back to querying Audio (preserving prior behaviour).
-    ///   When a gt.MediaType is not yet supported, discovery logs and skips.
-    ///
-    /// Logging:
-    ///   Only candidates that enter or update the top-3 store are logged individually.
-    ///   Per-item scoring of the full 69k+ pool is silent to avoid log spam.
-    ///
-    /// Belt-and-braces note:
-    ///   PostScanCandidateTask (ILibraryPostScanTask + scheduled 04:00 daily) is the
-    ///   load-bearing safety net for the folder-rename/upgrade scenario. The event-driven
-    ///   fast path is best-effort — metadata may not be settled at discovery time.
-    ///   The post-scan task runs after Emby has fully ingested new files and their
-    ///   metadata, at which point audio-specific signals (Album, AlbumArtist, Duration)
-    ///   are available and scoring is reliable.
+    /// Candidate cap: at most 3 candidates per (PlaylistId, MissingMember) pair.
+    /// Deduplication: update-on-improvement — existing record updated if new score is higher.
     /// </summary>
     internal static class CandidateDiscoverer
     {
         private const int MaxCandidatesPerMember = 3;
 
-        // Registered evidence collectors — order matters for logging only.
-        // BaseItem collector is always applied; audio collector chains on top.
-        private static readonly IEvidenceCollector BaseCollector = new BaseItemEvidenceCollector();
-        private static readonly IEvidenceCollector AudioCollector = new AudioEvidenceCollector();
-
-        // ── Entry point ────────────────────────────────────────────────────
+        private static readonly IEvidenceCollector _audioCollector = new AudioEvidenceCollector();
+        private static readonly IEvidenceCollector _episodeCollector = new EpisodeEvidenceCollector();
+        private static readonly IEvidenceCollector _movieCollector = new MovieEvidenceCollector();
+        private static readonly FolderEvidenceCollector _folderCollector = new FolderEvidenceCollector();
+        private static readonly FallbackEvidenceCollector _fallbackCollector = new FallbackEvidenceCollector();
 
         internal static void RunDiscovery(
             string targetPlaylistIdN,
@@ -91,16 +64,12 @@ namespace ListProtection.EntryPoints
                     return;
                 }
 
-                // Build the candidate pool once per media type encountered.
+                // Build item pool once per media type
                 var itemPoolByType = new Dictionary<string, BaseItem[]>(StringComparer.OrdinalIgnoreCase);
-
                 foreach (var missingEntry in missing)
                 {
-                    if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN)
-                        continue;
-
+                    if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN) continue;
                     var mediaType = missingEntry.Member?.MediaType ?? "Audio";
-
                     if (!itemPoolByType.ContainsKey(mediaType))
                     {
                         var pool = QueryItemPool(mediaType, libraryManager, logger);
@@ -111,11 +80,8 @@ namespace ListProtection.EntryPoints
 
                 foreach (var missingEntry in missing)
                 {
-                    if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN)
-                        continue;
-
+                    if (targetPlaylistIdN != null && missingEntry.PlaylistId != targetPlaylistIdN) continue;
                     var mediaType = missingEntry.Member?.MediaType ?? "Audio";
-
                     if (!itemPoolByType.TryGetValue(mediaType, out var pool) || pool.Length == 0)
                     {
                         logger.Info(
@@ -124,14 +90,7 @@ namespace ListProtection.EntryPoints
                         continue;
                     }
 
-                    ProcessMissingMember(
-                        missingEntry,
-                        gtStore,
-                        pool,
-                        existing,
-                        mediaType,
-                        logger,
-                        ref changed);
+                    ProcessMissingMember(missingEntry, gtStore, pool, existing, mediaType, logger, ref changed);
                 }
 
                 if (changed)
@@ -139,7 +98,6 @@ namespace ListProtection.EntryPoints
                     existing.Sort((a, b) => b.Score.CompareTo(a.Score));
                     plugin.CandidateStore.Save(existing);
                     logger.Info("[CandidateDiscoverer] Discovery complete — store updated");
-
                     WriteCandidateFoundEvents(existing, gtStore, plugin, logger);
                 }
                 else
@@ -152,8 +110,6 @@ namespace ListProtection.EntryPoints
                 logger.ErrorException("[CandidateDiscoverer] RunDiscovery failed", ex);
             }
         }
-
-        // ── Per-member discovery ───────────────────────────────────────────
 
         private static void ProcessMissingMember(
             MissingMemberEntry missingEntry,
@@ -171,13 +127,12 @@ namespace ListProtection.EntryPoints
                 member.Name, member.InternalId, mediaType,
                 missingEntry.PlaylistName, missingEntry.PlaylistId);
 
-            // Exclude items already in this playlist's ground truth
             var excludedIds = new HashSet<long>();
             if (gtStore.TryGetValue(missingEntry.PlaylistId, out var gtEntry) && gtEntry.Members != null)
                 foreach (var m in gtEntry.Members)
                     excludedIds.Add(m.InternalId);
 
-            var typeCollector = GetTypeCollector(mediaType);
+            var tier1Collector = GetTier1Collector(mediaType);
 
             var candidatesFound = 0;
             var candidatesUpdated = 0;
@@ -187,16 +142,20 @@ namespace ListProtection.EntryPoints
                 if (excludedIds.Contains(item.InternalId)) continue;
                 if (item.InternalId == member.InternalId) continue;
 
-                // ── Collect evidence ───────────────────────────────────────
-                var facts = new List<EvidenceFact>();
-                facts.AddRange(BaseCollector.Collect(member, item));
-                if (typeCollector != null)
-                    facts.AddRange(typeCollector.Collect(member, item));
+                // ── Collect facts per tier ─────────────────────────────────
+                var tier1Facts = tier1Collector != null
+                    ? tier1Collector.Collect(member, item).ToList()
+                    : new List<EvidenceFact>();
+
+                var tier2Facts = _folderCollector.Collect(member, item).ToList();
+
+                // Tier 3 collection — pass always; scorer suppresses when ContentScore > 0
+                var tier3Facts = _fallbackCollector.Collect(member, item).ToList();
 
                 // ── Score ──────────────────────────────────────────────────
-                CandidateScorer.Score(facts, out var score, out var signals);
+                var result = CandidateScorer.Score(tier1Facts, tier2Facts, tier3Facts, mediaType);
 
-                if (score == 0) continue;
+                if (result.CompositeScore == 0) continue;
 
                 // ── Deduplication — update-on-improvement ──────────────────
                 var existingEntry = existing.FirstOrDefault(c =>
@@ -206,18 +165,21 @@ namespace ListProtection.EntryPoints
 
                 if (existingEntry != null)
                 {
-                    if (score > existingEntry.Score)
+                    if (result.CompositeScore > existingEntry.Score)
                     {
-                        existingEntry.Score = score;
-                        existingEntry.MatchedSignals = signals;
+                        existingEntry.ContentScore = result.ContentScore;
+                        existingEntry.FallbackScore = result.FallbackScore;
+                        existingEntry.LocationScore = result.LocationScore;
+                        existingEntry.Score = result.CompositeScore;
+                        existingEntry.MatchedSignals = result.MatchedSignals;
                         existingEntry.LastScoredAt = DateTime.UtcNow;
                         changed = true;
                         candidatesUpdated++;
 
                         logger.Info(
-                            "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score {2}→{3} | Signals=[{4}]",
-                            item.Name, item.InternalId, existingEntry.Score, score,
-                            string.Join(", ", signals));
+                            "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score→{2} (C={3} L={4} F={5})",
+                            item.Name, item.InternalId, result.CompositeScore,
+                            result.ContentScore, result.LocationScore, result.FallbackScore);
                     }
                     else
                     {
@@ -235,15 +197,9 @@ namespace ListProtection.EntryPoints
 
                 if (currentForMember.Count >= MaxCandidatesPerMember)
                 {
-                    var lowestExisting = currentForMember
-                        .OrderBy(c => c.Score)
-                        .First();
-
-                    if (score <= lowestExisting.Score)
-                        continue;
-
-                    // Evict the lowest scorer to make room — no log, just a displacement
-                    existing.Remove(lowestExisting);
+                    var lowest = currentForMember.OrderBy(c => c.Score).First();
+                    if (result.CompositeScore <= lowest.Score) continue;
+                    existing.Remove(lowest);
                     changed = true;
                 }
 
@@ -256,8 +212,11 @@ namespace ListProtection.EntryPoints
                     CandidateId = item.Id.ToString("N"),
                     CandidateName = item.Name,
                     CandidatePath = item.Path,
-                    Score = score,
-                    MatchedSignals = signals,
+                    ContentScore = result.ContentScore,
+                    FallbackScore = result.FallbackScore,
+                    LocationScore = result.LocationScore,
+                    Score = result.CompositeScore,
+                    MatchedSignals = result.MatchedSignals,
                     DiscoveredAt = DateTime.UtcNow,
                     LastScoredAt = DateTime.UtcNow
                 };
@@ -266,18 +225,17 @@ namespace ListProtection.EntryPoints
                 candidatesFound++;
                 changed = true;
 
-                // Only log candidates that made it into the top-3 store
                 logger.Info(
-                    "[CandidateDiscoverer]   Candidate recorded: '{0}' | InternalId={1} | Score={2} | Signals=[{3}]",
-                    item.Name, item.InternalId, score, string.Join(", ", signals));
+                    "[CandidateDiscoverer]   Candidate recorded: '{0}' | InternalId={1} | Score={2} (C={3} L={4} F={5}) | Signals=[{6}]",
+                    item.Name, item.InternalId, result.CompositeScore,
+                    result.ContentScore, result.LocationScore, result.FallbackScore,
+                    string.Join(", ", result.MatchedSignals));
             }
 
             logger.Info(
                 "[CandidateDiscoverer]   Done — {0} new, {1} updated candidate(s) for '{2}'",
                 candidatesFound, candidatesUpdated, member.Name);
         }
-
-        // ── Item pool query ────────────────────────────────────────────────
 
         private static BaseItem[] QueryItemPool(
             string mediaType,
@@ -304,24 +262,22 @@ namespace ListProtection.EntryPoints
             });
 
             logger.Info(
-                "[CandidateDiscoverer] Queried MediaType='{0}' ({1}) — {2} item(s)",
-                mediaType, embyType, pool?.Length ?? 0);
+                "[CandidateDiscoverer] Queried MediaType='{0}' — {1} item(s)",
+                mediaType, pool?.Length ?? 0);
 
             return pool;
         }
 
-        // ── Collector selection ────────────────────────────────────────────
-
-        private static IEvidenceCollector GetTypeCollector(string mediaType)
+        private static IEvidenceCollector GetTier1Collector(string mediaType)
         {
             switch (mediaType)
             {
-                case "Audio": return AudioCollector;
+                case "Audio": return _audioCollector;
+                case "Episode": return _episodeCollector;
+                case "Movie": return _movieCollector;
                 default: return null;
             }
         }
-
-        // ── Event writing ──────────────────────────────────────────────────
 
         private static void WriteCandidateFoundEvents(
             List<CandidateEntry> all,
@@ -342,7 +298,6 @@ namespace ListProtection.EntryPoints
                 foreach (var kvp in byPlaylist)
                 {
                     gtStore.TryGetValue(kvp.Key, out var gtEntry);
-
                     var payloadLines = new List<string>();
                     foreach (var c in kvp.Value)
                     {
@@ -353,6 +308,7 @@ namespace ListProtection.EntryPoints
                             (c.MissingMember?.Name ?? "(unnamed)") +
                             " → " + (c.CandidateName ?? "(unnamed)") +
                             " | score=" + c.Score +
+                            " (C=" + c.ContentScore + " L=" + c.LocationScore + " F=" + c.FallbackScore + ")" +
                             " | " + (c.CandidatePath ?? string.Empty));
                     }
 
@@ -371,8 +327,6 @@ namespace ListProtection.EntryPoints
                 logger.ErrorException("[CandidateDiscoverer] Failed to write CandidateFound event", ex);
             }
         }
-
-        // ── Position helper ────────────────────────────────────────────────
 
         private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
         {

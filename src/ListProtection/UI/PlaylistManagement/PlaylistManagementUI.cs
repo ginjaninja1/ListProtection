@@ -14,27 +14,15 @@ namespace ListProtection.UI.PlaylistManagement
 
         public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");
 
-        // ── Filters ────────────────────────────────────────────────────────
-
-        [DisplayName("Show")]
-        [AutoPostBack("PlaylistAction", nameof(FilterType))]
-        public string FilterType { get; set; } = "Both";
-
-        [DisplayName("Protection")]
-        [AutoPostBack("PlaylistAction", nameof(FilterProtection))]
-        public string FilterProtection { get; set; } = "Both";
-
-        // ── Grid ───────────────────────────────────────────────────────────
-
         [GridDataSource(nameof(PlaylistRows))]
         public DxDataGrid PlaylistGrid { get; set; }
 
         [Browsable(false)]
         public PlaylistRow[] PlaylistRows { get; set; } = Array.Empty<PlaylistRow>();
 
-        public static PlaylistManagementUI Build(PlaylistRow[] rows, string filterType = "Both", string filterProtection = "Both")
+        public static PlaylistManagementUI Build(PlaylistRow[] rows)
         {
-            var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, false, false)
+            var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, true, true)
             {
                 editing = new DxGridEditing
                 {
@@ -42,7 +30,8 @@ namespace ListProtection.UI.PlaylistManagement
                     allowUpdating = true
                 },
                 onChangeCommand = new DxGridOnChangeCommand { commandId = "PlaylistAction" },
-                columnAutoWidth = false
+                columnAutoWidth = false,
+                heightMode = DxGridOptions.GridHeightMode.large
             };
 
             if (options.columns != null)
@@ -124,8 +113,6 @@ namespace ListProtection.UI.PlaylistManagement
 
             return new PlaylistManagementUI
             {
-                FilterType = filterType,
-                FilterProtection = filterProtection,
                 PlaylistGrid = new DxDataGrid(options),
                 PlaylistRows = rows
             };

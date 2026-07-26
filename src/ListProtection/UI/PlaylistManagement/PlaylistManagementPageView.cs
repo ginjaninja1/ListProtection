@@ -33,10 +33,6 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ILogger _logger;
         private readonly PlaylistRepairService _repairService;
 
-        // Current filter state — persisted across RunCommand calls within a session
-        private string _filterType = "Both";
-        private string _filterProtection = "Both";
-
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
             PlaylistManagementStore store,
@@ -63,13 +59,9 @@ namespace ListProtection.UI.PlaylistManagement
             ContentData = BuildOptions();
         }
 
-        // ── RunCommand ─────────────────────────────────────────────────────
-
         public override async Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
-            _logger.Info(
-                "[PlaylistManagementPageView] RunCommand | commandId={0}",
-                commandId ?? "(null)");
+            _logger.Info("[PlaylistManagementPageView] RunCommand | commandId={0}", commandId ?? "(null)");
 
             try
             {
@@ -86,12 +78,6 @@ namespace ListProtection.UI.PlaylistManagement
                     ContentData = BuildOptions();
                     return this;
                 }
-
-                // ── Capture filter state from incoming UI ──────────────────
-                if (!string.IsNullOrEmpty(ui.FilterType))
-                    _filterType = ui.FilterType;
-                if (!string.IsNullOrEmpty(ui.FilterProtection))
-                    _filterProtection = ui.FilterProtection;
 
                 // ── Action: Open History ───────────────────────────────────
                 var openHistoryRow = ui.PlaylistRows.FirstOrDefault(r => r.OpenHistory && !string.IsNullOrEmpty(r.Id));
@@ -182,7 +168,6 @@ namespace ListProtection.UI.PlaylistManagement
                 var beingProtected = incomingProtectedIds
                     .Where(id => !currentProtectedIds.Contains(id)).ToArray();
 
-                // Unprotect — confirm dialog
                 if (beingUnprotected.Length == 1 && beingProtected.Length == 0)
                 {
                     var unprotectId = beingUnprotected[0];
@@ -251,8 +236,6 @@ namespace ListProtection.UI.PlaylistManagement
             return this;
         }
 
-        // ── Dialog result ──────────────────────────────────────────────────
-
         public override void OnDialogResult(IPluginUIView dialogView, bool completedOk, object data)
         {
             if (dialogView is RepairDialogView || dialogView is GroundTruthDialogView || dialogView is EventHistoryDialogView)
@@ -263,38 +246,19 @@ namespace ListProtection.UI.PlaylistManagement
             base.OnDialogResult(dialogView, completedOk, data);
         }
 
-        // ── Build ──────────────────────────────────────────────────────────
-
         private PlaylistManagementUI BuildOptions()
         {
             try
             {
                 var protectedIds = _store.Load();
                 var rows = BuildRows(protectedIds);
-                var filtered = ApplyFilter(rows);
-                return PlaylistManagementUI.Build(filtered, _filterType, _filterProtection);
+                return PlaylistManagementUI.Build(rows);
             }
             catch (Exception ex)
             {
                 _logger.ErrorException("[PlaylistManagementPageView] BuildOptions failed", ex);
-                return PlaylistManagementUI.Build(Array.Empty<PlaylistRow>(), _filterType, _filterProtection);
+                return PlaylistManagementUI.Build(Array.Empty<PlaylistRow>());
             }
-        }
-
-        private PlaylistRow[] ApplyFilter(PlaylistRow[] rows)
-        {
-            return rows.Where(r =>
-            {
-                // Type filter
-                if (_filterType == "Playlists" && r.ListType != "Playlist") return false;
-                if (_filterType == "Collections" && r.ListType != "Collection") return false;
-
-                // Protection filter
-                if (_filterProtection == "Protected" && !r.IsProtected) return false;
-                if (_filterProtection == "Unprotected" && r.IsProtected) return false;
-
-                return true;
-            }).ToArray();
         }
 
         private PlaylistRow[] BuildRows(HashSet<string> protectedIds)
@@ -309,14 +273,12 @@ namespace ListProtection.UI.PlaylistManagement
                 if (!string.IsNullOrEmpty(ev.PlaylistId))
                     idsWithHistory.Add(ev.PlaylistId);
 
-            // Enumerate playlists
             var playlists = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "Playlist" },
                 Recursive = true
             }) ?? Array.Empty<BaseItem>();
 
-            // Enumerate collections
             var collections = _libraryManager.GetItemList(new InternalItemsQuery
             {
                 IncludeItemTypes = new[] { "BoxSet" },
@@ -352,7 +314,6 @@ namespace ListProtection.UI.PlaylistManagement
                 memberCount = gtEntry.Members?.Count ?? 0;
             else
             {
-                // Live count for unprotected items
                 if (listType == "Collection")
                 {
                     var col = item as BoxSet;
@@ -413,8 +374,6 @@ namespace ListProtection.UI.PlaylistManagement
             };
         }
 
-        // ── Ground Truth capture ───────────────────────────────────────────
-
         private void ReconcileGroundTruth(HashSet<string> protectedIds)
         {
             try
@@ -460,7 +419,6 @@ namespace ListProtection.UI.PlaylistManagement
                     return null;
                 }
 
-                // Try playlist first
                 var playlists = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     IncludeItemTypes = new[] { "Playlist" },
@@ -483,7 +441,6 @@ namespace ListProtection.UI.PlaylistManagement
                     };
                 }
 
-                // Try collection
                 var collections = _libraryManager.GetItemList(new InternalItemsQuery
                 {
                     IncludeItemTypes = new[] { "BoxSet" },
@@ -501,7 +458,7 @@ namespace ListProtection.UI.PlaylistManagement
                     {
                         ListType = "Collection",
                         ListName = c.Name ?? "(unnamed)",
-                        IsPublic = null, // Collections have no per-user ownership
+                        IsPublic = null,
                         Members = members.Select(m => GroundTruthMemberFactory.FromItem(m)).ToList()
                     };
                 }
@@ -515,8 +472,6 @@ namespace ListProtection.UI.PlaylistManagement
                 return null;
             }
         }
-
-        // ── Repair All helper ──────────────────────────────────────────────
 
         private MissingMemberRow[] BuildRepairAllRows(string[] listIds)
         {
@@ -573,8 +528,6 @@ namespace ListProtection.UI.PlaylistManagement
             return rows.ToArray();
         }
 
-        // ── Purge helpers ──────────────────────────────────────────────────
-
         private void PurgeStaleDetectionData(string[] listIds)
         {
             try
@@ -599,8 +552,6 @@ namespace ListProtection.UI.PlaylistManagement
             }
         }
 
-        // ── Event helpers ──────────────────────────────────────────────────
-
         private void WriteEvent(string eventType, string listId, string listName, string payload)
         {
             try
@@ -619,8 +570,6 @@ namespace ListProtection.UI.PlaylistManagement
                 _logger.ErrorException("[PlaylistManagementPageView] WriteEvent failed", ex);
             }
         }
-
-        // ── Private types ──────────────────────────────────────────────────
 
         private class CaptureResult
         {

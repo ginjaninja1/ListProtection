@@ -190,3 +190,30 @@ BasePlugin<T> constructor
 Takes (IApplicationPaths, IXmlSerializer) — not (IServerApplicationHost, ILogManager). Emby's IoC resolves all constructor parameters; add any other services you need alongside those two.
 PluginViewBase.RunCommand default
 Returns Task.FromResult<IPluginUIView>(null). Returning null closes a dialog. For a page view, return Task.FromResult((IPluginUIView)this) to stay on the page after handling a command.
+
+
+--- COLLECTION MEMBERSHIP MODEL (PROVEN — ILSpy, 2026-07-25) ---
+
+  BoxSet (collection) membership is item-side metadata, not a DB join table.
+  item.AddCollection(boxSet) mutates item.Collections (LinkedItemInfo[]) then
+  item.UpdateToRepository(ItemUpdateType.MetadataEdit) persists it.
+  No ListItemEntryId or ListItemOrder equivalent exists for collections.
+
+  ICollectionManager.RemoveFromCollection(BoxSet, long[] itemIds) — InternalIds, not entry IDs.
+  ICollectionManager.AddToCollection(long collectionId, long[] itemIds) — InternalIds.
+  ICollectionManager.CreateCollection(CollectionCreationOptions) — returns Task<BoxSet> directly,
+    no ID indirection. CollectionCreationOptions: Name, ItemIdList (long[]), UserIds (long[]).
+
+  CollectionDisplayOrder enum: only PremiereDate and SortName — no manual/custom ordering.
+  BoxSet.GetItemsInternal sorts by DisplayOrder (metadata-derived). No insertion order column.
+  Collections are unordered sets for GT purposes. Repair does not restore order.
+
+  Collections have no per-user ownership. BoxSet.IsAuthorizedToDelete gates on IsAdministrator.
+  IsPublic is on BaseItem (confirmed) — relevant to playlists only, not collections.
+
+  BoxSet.GetItemList(new InternalItemsQuery()) correctly enumerates members via
+  CollectionIds DB filter in GetItemsInternal — same call pattern as Playlist.GetItemList.
+
+  For collection GT capture: ListItemEntryId is 0, order is not guaranteed, members are a set.
+  For collection repair: RemoveFromCollection then AddToCollection with InternalIds only.
+  For collection recreation: CreateCollection returns BoxSet directly — use boxSet.Id.ToString("N").

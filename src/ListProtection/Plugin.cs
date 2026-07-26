@@ -5,6 +5,7 @@ using MediaBrowser.Common;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Drawing;
@@ -26,35 +27,14 @@ namespace ListProtection
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
+        private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
         private List<IPluginUIPageController> _pages;
 
         public static ListProtectionPlugin Instance { get; private set; }
 
-        /// <summary>
-        /// Process-wide writer lock — all Load→mutate→Save sequences on any store
-        /// must acquire this before loading and release after saving.
-        /// Prevents concurrent writes from PlaylistMaintenanceService,
-        /// MissingMemberDetectionService, PlaylistRepairService, and UI handlers
-        /// from silently clobbering each other.
-        /// Use: plugin.WriterLock.Wait() / finally plugin.WriterLock.Release()
-        /// </summary>
         public SemaphoreSlim WriterLock { get; } = new SemaphoreSlim(1, 1);
 
-        /// <summary>
-        /// Playlist InternalIds currently under active repair by PlaylistRepairService.
-        /// PlaylistMaintenanceService skips both add-queuing and GT removes for
-        /// suppressed playlists — repair owns the full GT update for that window.
-        ///
-        /// Suppression is set before RemoveFromPlaylist (Step 2) and cleared after
-        /// AddToPlaylist (Step 4) in a finally block, covering the entire atomic
-        /// remove→add cycle.
-        ///
-        /// Edge case acknowledged: a user-initiated remove on the exact same playlist
-        /// during the repair window will be silently ignored by PlaylistMaintenanceService
-        /// and logged as a warning. This is an acceptable trade-off given the brevity
-        /// of the repair window.
-        /// </summary>
         public readonly ConcurrentDictionary<long, byte> RepairSuppressedPlaylists
             = new ConcurrentDictionary<long, byte>();
 
@@ -71,12 +51,14 @@ namespace ListProtection
             ILogManager logManager,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager)
             : base(applicationPaths, xmlSerializer)
         {
             _applicationHost = applicationHost;
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
+            _collectionManager = collectionManager;
             _userManager = userManager;
             _logger = logManager.GetLogger(this.Name);
 
@@ -114,6 +96,7 @@ namespace ListProtection
                             MissingMembersStore,
                             _libraryManager,
                             _playlistManager,
+                            _collectionManager,
                             _userManager,
                             _applicationHost.Resolve<ILogManager>())
                     };

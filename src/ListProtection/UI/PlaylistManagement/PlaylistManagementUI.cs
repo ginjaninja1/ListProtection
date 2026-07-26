@@ -7,28 +7,24 @@ using System.ComponentModel;
 
 namespace ListProtection.UI.PlaylistManagement
 {
-    /// <summary>
-    /// UI definition for Tab 1 — Managed Playlists.
-    ///
-    /// Columns (left to right):
-    ///   Playlist (Name)   — wide, read-only
-    ///   Status            — "GT/MM/MC" summary string, read-only, narrow
-    ///   Protected         — bool toggle
-    ///   R                 — OpenRepair bool (protected only, server-side guard)
-    ///   M                 — OpenGroundTruth bool (protected only)
-    ///   H                 — OpenHistory bool (protected only)
-    ///
-    /// Hidden: Id, InternalId, RepairAll, Detail (child grid source).
-    ///
-    /// Detail child grid: PlaylistDetailRow — PlaylistId, Path, GT Captured.
-    /// </summary>
     public class PlaylistManagementUI : EditableOptionsBase
     {
-        public override string EditorTitle => "Managed Playlists";
-        public override string EditorDescription => "Toggle protection on a playlist to track its membership.";
-
+        public override string EditorTitle => "Managed Lists";
+        public override string EditorDescription => "Toggle protection on a playlist or collection to track its membership.";
 
         public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");
+
+        // ── Filters ────────────────────────────────────────────────────────
+
+        [DisplayName("Show")]
+        [AutoPostBack("PlaylistAction", nameof(FilterType))]
+        public string FilterType { get; set; } = "Both";
+
+        [DisplayName("Protection")]
+        [AutoPostBack("PlaylistAction", nameof(FilterProtection))]
+        public string FilterProtection { get; set; } = "Both";
+
+        // ── Grid ───────────────────────────────────────────────────────────
 
         [GridDataSource(nameof(PlaylistRows))]
         public DxDataGrid PlaylistGrid { get; set; }
@@ -36,7 +32,7 @@ namespace ListProtection.UI.PlaylistManagement
         [Browsable(false)]
         public PlaylistRow[] PlaylistRows { get; set; } = Array.Empty<PlaylistRow>();
 
-        public static PlaylistManagementUI Build(PlaylistRow[] rows)
+        public static PlaylistManagementUI Build(PlaylistRow[] rows, string filterType = "Both", string filterProtection = "Both")
         {
             var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, false, false)
             {
@@ -70,9 +66,14 @@ namespace ListProtection.UI.PlaylistManagement
                             col.isSecondaryGridDataSource = true;
                             break;
 
+                        case "ListType":
+                            col.allowEditing = false;
+                            col.caption = "Type";
+                            col.width = 90;
+                            break;
+
                         case "Name":
                             col.allowEditing = false;
-                            // No fixed width — consumes remaining space
                             break;
 
                         case "Status":
@@ -104,26 +105,14 @@ namespace ListProtection.UI.PlaylistManagement
                 }
             }
 
-            // ── Detail child grid ──────────────────────────────────────────
-            var detailOptions = new DxGridOptions(
-                new PlaylistDetailRow(),
-                "PlaylistId",
-                false,
-                false,
-                false,
-                false)
+            var detailOptions = new DxGridOptions(new PlaylistDetailRow(), "PlaylistId", false, false, false, false)
             {
                 heightMode = DxGridOptions.GridHeightMode.auto
             };
 
             if (detailOptions.columns != null)
-            {
                 foreach (var col in detailOptions.columns)
-                {
-                    if (col.dataField == null) continue;
                     col.allowEditing = false;
-                }
-            }
 
             options.masterDetail = new DxGridMasterDetail
             {
@@ -135,6 +124,8 @@ namespace ListProtection.UI.PlaylistManagement
 
             return new PlaylistManagementUI
             {
+                FilterType = filterType,
+                FilterProtection = filterProtection,
                 PlaylistGrid = new DxDataGrid(options),
                 PlaylistRows = rows
             };

@@ -1,6 +1,7 @@
 ﻿using ListProtection.Scoring;
 using ListProtection.Storage;
 using ListProtection.UI.MissingMembers;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
@@ -13,24 +14,8 @@ using System.Threading.Tasks;
 
 namespace ListProtection.Services
 {
-    /// <summary>
-    /// Runs automatic repairs after candidate discovery.
-    ///
-    /// For each missing member, builds a ranked ScoredCandidate list and passes
-    /// it to the registered IAutoRepairEligibility gate for that media type.
-    /// The gate enforces score threshold, min-distance, and semantic conditions.
-    ///
-    /// Eligibility gates are registered in _eligibilityGates below.
-    /// Adding support for a new media type requires only a new gate registration —
-    /// no other code changes.
-    ///
-    /// Evidence collectors (for re-scoring at repair time) are constructed with
-    /// duration tolerances sourced from PluginConfiguration.
-    /// </summary>
     internal static class AutoRepairer
     {
-        // ── Eligibility gates ──────────────────────────────────────────────
-
         private static readonly Dictionary<string, IAutoRepairEligibility> _eligibilityGates =
             new Dictionary<string, IAutoRepairEligibility>(StringComparer.OrdinalIgnoreCase)
             {
@@ -43,6 +28,7 @@ namespace ListProtection.Services
             string targetPlaylistIdN,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager,
             ILogger logger)
         {
@@ -97,6 +83,7 @@ namespace ListProtection.Services
                     plugin.PlaylistStore,
                     libraryManager,
                     playlistManager,
+                    collectionManager,
                     userManager,
                     logger);
 
@@ -114,7 +101,6 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    // Build ranked candidate list — only entries where live item resolved
                     var rankedCandidates = candidates
                         .Where(c =>
                             c.PlaylistId == record.PlaylistId &&

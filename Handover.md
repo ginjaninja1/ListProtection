@@ -6,61 +6,66 @@
 3. Ask Tim to commit latest changes before re-reading the repository
 4. Update this file at session end
 
----
-
-
----
-
 ## Current state (2026-07-25)
 
 ### What was completed this session
 
-**Full scoring engine redesign — committed and tested.**
+**Collections support — architecture and core implementation complete.**
 
-The original scoring architecture was replaced with a clean three-tier model. All files listed below are in their final committed state on `NewScoring`.
+#### Files changed
+- `Storage/GroundTruthEntry.cs` — added `ListType` ("Playlist"|"Collection"), `IsPublic` (playlist-only), `IsCollection`/`IsPlaylist` helpers
+- `UI/PlaylistManagement/PlaylistRow.cs` — added `ListType` column
+- `UI/PlaylistManagement/PlaylistManagementUI.cs` — added `FilterType` and `FilterProtection` AutoPostBack dropdowns; `ListType` column in grid
+- `UI/PlaylistManagement/PlaylistManagementPageView.cs` — collection enumeration (BoxSet), collection GT capture, filter state, `BuildRow` extracted, `CaptureMembers` handles both types
+- `Services/PlaylistRepairService.cs` — `ICollectionManager` injected; collection repair branch (targeted remove+add, no rebuild-in-order); playlist repair branch preserved intact
+- `EntryPoints/MissingMemberDetector.cs` — BoxSet detection path alongside playlist path
+- `Plugin.cs` — `ICollectionManager` added to constructor and wired
+- `UI/MainController.cs` — `ICollectionManager` passed through to `PlaylistRepairService` and `PlaylistManagementPageView`
+- `Evidence.md` — collection membership model fully documented
 
-#### Architecture — three tiers
+#### Key architectural decisions locked
+1. Collections are unordered sets — `CollectionDisplayOrder` has only `PremiereDate` and `SortName`, no manual ordering. GT members stored as set, repair does not restore order.
+2. Collection membership is item-side (`item.Collections` LinkedItemInfo[]) — `RemoveFromCollection`/`AddToCollection` take InternalIds, not entry IDs.
+3. `CreateCollection` returns `BoxSet` directly — no ID indirection step needed.
+4. `IsPublic` captured for playlists at GT time, null for collections.
+5. Filter state (`FilterType`, `FilterProtection`) is page-level session state, applied server-side in `ApplyFilter`.
 
-**Tier 1 — Media-type content (Identity)**
-- `AudioEvidenceCollector`, `EpisodeEvidenceCollector`, `MovieEvidenceCollector`
-- Emit atomic boolean facts only — no combination logic, no else-if chains
-- `CandidateScorer` applies `ScoringWeights` prioritised rule table → `ContentScore`
-- First matching rule wins (most specific first)
+#### Not yet tested
+- Filter AutoPostBack wiring (FilterType/FilterProtection dropdowns) — depends on framework supporting string AutoPostBack fields; may need SelectItem if string fields don't work.
+- Collection detection via `MissingMemberDetectionService` — `ItemUpdated` probe for collection membership removal not yet run. Current detection relies on scheduled tasks (`RunDetection` sweeps) which now handle both types.
+- `CollectionCreationOptions.UserIds` effect unknown — passed empty for now.
 
-**Tier 2 — Folder depth (Location)**
-- `FolderEvidenceCollector` — always runs, media-type agnostic
-- Emits `Folder.Depth1` through `Folder.Depth10` facts (cumulative conditional chain)
-- Contributes `LocationScore` only when `ContentScore > 0` OR `FallbackScore > 0`
-- Folder depth alone cannot surface a candidate — requires content anchor
+---
 
-**Tier 3 — Fallback**
-- `FallbackEvidenceCollector` — runs only when `ContentScore == 0`
-- Name pair (exact/normalized) and filename stem pair — mutually exclusive within each pair
-- Name and filename can stack (different fields)
+## Decisions made this session (do not relitigate without strong reason)
 
-#### Key files changed/added
-- `EvidenceFact.cs` — atomic signal, name only
-- `IEvidenceCollector.cs` — updated interface comment
-- `AudioEvidenceCollector.cs` — atomic facts only, + `AudioFacts` constants class
-- `EpisodeEvidenceCollector.cs` — atomic facts only, + `EpisodeFacts` constants class
-- `MovieEvidenceCollector.cs` — atomic facts only, + `MovieFacts` constants class
-- `FolderEvidenceCollector.cs` — new, depth loop, `FolderFacts` constants class
-- `FallbackEvidenceCollector.cs` — new, name/filename fallback, `FallbackFacts` constants class
-- `ScoringWeights.cs` — rule tables for Audio/Episode/Movie/Fallback + `ScoringRule` class
-- `ScoringResult.cs` — new, three independent scores + matched signals
-- `CandidateScorer.cs` — stateless, three-pass scoring, enforces tier suppression
-- `CandidateEntry.cs` — gains `ContentScore`, `FallbackScore`, `LocationScore` alongside `Score`
-- `CandidateDiscoverer.cs` — updated to collect per-tier, call new scorer signature, log C/L/F breakdown
-- `BaseItemEvidenceCollector.cs` — deleted (replaced by Folder + Fallback collectors)
-- `ScoringReferenceDialog.cs` — rebuilt from rule tables, no longer references old ScoringWeights shape
+[all previous decisions preserved — add:]
 
-#### Test result (2026-07-25)
-FLAC album removed, MP3 version added in slightly different parent folder.
-- Correct candidates found at `C=170, L=0, F=0` — full Name+Artist+Album+Track+Duration rule fired
-- `L=0` correct — folder changed, no depth match
-- `F=0` correct — Tier 3 suppressed when Tier 1 fires
-- Sibling-album noise candidates at `C=25` — `ArtistMatch+AlbumMatch` only. Expected, acceptable.
-- No `C=0, L>0` anywhere — anchor requirement holding
+6. **Collections are unordered sets** — `CollectionDisplayOrder` enum confirmed to have only `PremiereDate` and `SortName`. No manual/insertion order exists anywhere in the collection stack. GT captures members as a set; repair is targeted (remove missing, add candidate), not a full rebuild.
+
+7. **Filter state is page-level session state** — `_filterType` and `_filterProtection` on `PlaylistManagementPageView` capture incoming filter values on every `RunCommand` and apply them in `ApplyFilter` before building the grid. Stateless rebuild pattern preserved.
+
+---
+
+## On the horizon — priority order
+
+### 1. Filter dropdown verification
+AutoPostBack on string fields in `PlaylistManagementUI` may not work if the framework requires SelectItem/enum. Test by toggling filters and observing if RunCommand fires. If not, convert to SelectItem with predefined options.
+
+### 2. Event-driven detection for collections
+`MissingMemberDetectionService` currently detects Audio/Folder removal via `ItemRemoved`. For collections, removal manifests differently — need a probe to confirm what event fires when a member is removed from a collection via Emby UI. Candidate: `ItemUpdated` on the member item (its `Collections` linked items change). Probe before implementing.
+
+### 3. Negative signals (highest priority scoring improvement)
+[unchanged from previous session]
+
+### 4. DiscNumberMatch atomic signal
+[unchanged]
+
+### 5. Eligibility gates — technical debt
+[unchanged]
+
+### 6. Unit test for rule ordering
+[unchanged]
 
 ---
 

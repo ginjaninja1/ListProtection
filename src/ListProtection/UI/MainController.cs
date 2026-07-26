@@ -5,6 +5,7 @@ using ListProtection.UI.MissingMembers;
 using ListProtection.UI.PlaylistManagement;
 using ListProtection.UIBaseClasses;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
@@ -25,6 +26,7 @@ namespace ListProtection.UI
         private readonly MissingMembersStore _missingMembersStore;
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
+        private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
@@ -39,6 +41,7 @@ namespace ListProtection.UI
             MissingMembersStore missingMembersStore,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager,
             ILogManager logManager)
             : base(pluginInfo.Id)
@@ -49,6 +52,7 @@ namespace ListProtection.UI
             _missingMembersStore = missingMembersStore;
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
+            _collectionManager = collectionManager;
             _userManager = userManager;
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
             _logger = logManager.GetLogger(nameof(MainController));
@@ -59,6 +63,7 @@ namespace ListProtection.UI
                 _playlistStore,
                 _libraryManager,
                 _playlistManager,
+                _collectionManager,
                 _userManager,
                 _logger);
 
@@ -71,7 +76,6 @@ namespace ListProtection.UI
                 IsMainConfigPage = true
             };
 
-            // Tab 1 — Managed Playlists
             _tabPages.Add(new TabPageController(
                 pluginInfo,
                 "ListProtection",
@@ -81,29 +85,11 @@ namespace ListProtection.UI
                     _playlistStore,
                     _groundTruthStore,
                     _libraryManager,
+                    _collectionManager,
                     _jsonSerializer,
                     _logger,
                     _repairService)));
 
-            // Tab 2 — Missing Members (hidden — functionality now covered by Repair dialog)
-            // Uncomment to restore the standalone missing members tab.
-            //_tabPages.Add(new TabPageController(
-            //    pluginInfo,
-            //    "MissingMembers",
-            //    "Missing Members",
-            //    info => new MissingMembersPageView(
-            //        info,
-            //        _missingMembersStore,
-            //        _groundTruthStore,
-            //        _playlistStore,
-            //        _jsonSerializer,
-            //        _logger,
-            //        _libraryManager,
-            //        _repairService)));
-
-            // Tab 3 — Configuration
-            // ConfigPageView reads from Plugin.Instance.Configuration directly;
-            // no store reference needed.
             _tabPages.Add(new TabPageController(
                 pluginInfo,
                 "Configuration",
@@ -120,6 +106,7 @@ namespace ListProtection.UI
                 _playlistStore,
                 _groundTruthStore,
                 _libraryManager,
+                _collectionManager,
                 _jsonSerializer,
                 _logger,
                 _repairService);

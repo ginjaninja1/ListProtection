@@ -1,5 +1,6 @@
 ﻿using ListProtection.Services;
 using ListProtection.Storage;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Plugins;
@@ -12,71 +13,15 @@ using System.IO;
 
 namespace ListProtection.EntryPoints
 {
-    /// <summary>
-    /// IServerEntryPoint — real-time missing member detection.
-    ///
-    /// All event paths are gated behind EventDrivenRepairEnabled in config.
-    /// When disabled, this service subscribes to events but exits each handler
-    /// immediately, so the scheduled tasks (PostScanDetectTask, PostScanCandidateTask,
-    /// daily sweeps) become the sole protection mechanism.
-    ///
-    /// Three fast paths, all proven by probe:
-    ///
-    ///   1. ItemRemoved (Type=Audio)
-    ///      Fires when a single file is renamed or deleted. The removed
-    ///      InternalId is matched directly against GT members.
-    ///      Proven: Task 5, file rename probe 2026-07-18.
-    ///
-    ///   2. ItemRemoved (Type=Folder)
-    ///      Fires when a folder is renamed. Emby removes the old folder entity
-    ///      and creates new Audio entities with new InternalIds underneath the
-    ///      new folder — no individual Audio ItemRemoved fires for the tracks.
-    ///      We match via path prefix: any GT member whose Path starts with the
-    ///      removed folder's Path is affected.
-    ///      Proven: folder rename probe 2026-07-18.
-    ///
-    ///   3. ItemAdded (Type=Folder)
-    ///      Fires when a new folder appears. We check whether the added folder
-    ///      shares the same PARENT directory as any missing member's stored path.
-    ///      Matching on parent (rather than path prefix) catches replacement
-    ///      folders with different names from the original — e.g. original
-    ///      "[2009] Bomb in a Birdcage" replaced by "[2009] Bomb in a birdcage change".
-    ///      If a match is found, we queue discovery keyed on the shared parent
-    ///      so it drains after the artist-level RefreshCompleted fires (by which
-    ///      point FFProbe has settled all metadata).
-    ///      Proven: different-name folder replacement log 2026-07-22.
-    ///
-    ///   4. RefreshCompleted (Type=Folder / MusicArtist)
-    ///      Drains _pendingCandidateDiscovery when the refreshed item's path
-    ///      is the queued key or a true ancestor of it (refreshedPath is a
-    ///      prefix of key). Sibling album folders are intentionally excluded —
-    ///      only the artist-level folder (or higher) triggers drainage so that
-    ///      all child track metadata is settled before discovery runs.
-    ///      Proven: folder rename probe 2026-07-18; drain-too-early fix 2026-07-22.
-    ///
-    /// Belt-and-braces sweeps:
-    ///   PostScanDetectionTask  — runs detection after every library scan + daily 03:00
-    ///   PostScanCandidateTask  — runs discovery after every library scan + daily 04:00
-    ///   DetectMissingMembersTask / CandidateDiscoveryTask — manual dashboard runs
-    ///
-    /// Auto-repair:
-    ///   After candidate discovery, if AutoRepairEnabled is true in config,
-    ///   AutoRepairer.RunAutoRepair is called for the affected playlists.
-    /// </summary>
     public class MissingMemberDetectionService : IServerEntryPoint
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IProviderManager _providerManager;
         private readonly IPlaylistManager _playlistManager;
+        private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
         private readonly ILogger _logger;
 
-        /// <summary>
-        /// Keyed by the PARENT of the removed/added folder (the artist/show folder).
-        /// Value: playlist IDs that have missing members under that folder.
-        /// Populated by OnItemRemoved (Folder) and OnItemAdded (Folder).
-        /// Consumed by OnRefreshCompleted.
-        /// </summary>
         private readonly Dictionary<string, List<string>> _pendingCandidateDiscovery
             = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
@@ -84,12 +29,14 @@ namespace ListProtection.EntryPoints
             ILibraryManager libraryManager,
             IProviderManager providerManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager,
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _providerManager = providerManager;
             _playlistManager = playlistManager;
+            _collectionManager = collectionManager;
             _userManager = userManager;
             _logger = logManager.GetLogger(nameof(MissingMemberDetectionService));
         }
@@ -104,14 +51,11 @@ namespace ListProtection.EntryPoints
             _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + ItemUpdated + RefreshCompleted active");
         }
 
-        // ── Config gate ────────────────────────────────────────────────────
-
         private bool IsEventDrivenRepairEnabled()
         {
             try
             {
                 var config = ListProtectionPlugin.Instance?.Configuration;
-                // Default true — safe to run if config is unavailable
                 return config == null || config.EventDrivenRepairEnabled;
             }
             catch
@@ -119,8 +63,6 @@ namespace ListProtection.EntryPoints
                 return true;
             }
         }
-
-        // ── ItemRemoved ────────────────────────────────────────────────────
 
         private void OnItemRemoved(object sender, ItemChangeEventArgs e)
         {
@@ -147,10 +89,6 @@ namespace ListProtection.EntryPoints
             }
         }
 
-        /// <summary>
-        /// PROVEN path — single file rename/delete.
-        /// Match the removed InternalId directly against GT members.
-        /// </summary>
         private void HandleAudioRemoved(long removedInternalId, ListProtectionPlugin plugin)
         {
             if (removedInternalId == 0) return;
@@ -176,16 +114,10 @@ namespace ListProtection.EntryPoints
                     "[MissingMemberDetectionService] Audio removed — running detection for playlist {0}",
                     playlistId);
                 MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
-
                 QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
             }
         }
 
-        /// <summary>
-        /// PROVEN path — folder rename/removal.
-        /// Match GT member paths by prefix against the removed folder path.
-        /// Queue affected playlists for candidate discovery on RefreshCompleted.
-        /// </summary>
         private void HandleFolderRemoved(string removedFolderPath, ListProtectionPlugin plugin)
         {
             if (string.IsNullOrEmpty(removedFolderPath)) return;
@@ -220,9 +152,6 @@ namespace ListProtection.EntryPoints
                 "[MissingMemberDetectionService] Folder removed '{0}' — {1} affected playlist(s)",
                 removedFolderPath, affectedPlaylists.Count);
 
-            // Key on the parent of the removed folder (the artist/show folder) so that
-            // discovery drains only after the artist-level RefreshCompleted fires — by
-            // which point FFProbe has settled all child track metadata to the DB.
             var discoveryKey = Path.GetDirectoryName(normalised) ?? normalised;
 
             foreach (var playlistId in affectedPlaylists)
@@ -231,12 +160,9 @@ namespace ListProtection.EntryPoints
                     "[MissingMemberDetectionService] Running detection for playlist {0}",
                     playlistId);
                 MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
-
                 QueueCandidateDiscovery(discoveryKey, playlistId);
             }
         }
-
-        // ── ItemAdded ──────────────────────────────────────────────────────
 
         private void OnItemAdded(object sender, ItemChangeEventArgs e)
         {
@@ -326,21 +252,6 @@ namespace ListProtection.EntryPoints
             }
         }
 
-        /// <summary>
-        /// PROVEN path — folder added/restored.
-        /// Matches when the added folder's PARENT directory equals the parent
-        /// directory of any missing member's stored path. This handles both:
-        ///   - Same-name restore: added folder path prefix matches GT member path
-        ///     (parent match is a superset of this)
-        ///   - Different-name replacement: original "[2009] Bomb in a Birdcage"
-        ///     replaced by "[2009] Bomb in a birdcage change" — prefix match would
-        ///     fail, but parent match succeeds because both sit under the same
-        ///     artist folder.
-        /// Discovery is queued on the shared parent (the artist folder) so it
-        /// drains after the artist-level RefreshCompleted, by which point FFProbe
-        /// has settled all child track metadata.
-        /// Proven: different-name folder replacement log 2026-07-22.
-        /// </summary>
         private void HandleFolderAdded(string addedFolderPath, ListProtectionPlugin plugin)
         {
             var normalised = addedFolderPath.TrimEnd('\\', '/');
@@ -376,8 +287,6 @@ namespace ListProtection.EntryPoints
                 QueueCandidateDiscovery(addedParent, playlistId);
         }
 
-        // ── Queue helper ───────────────────────────────────────────────────
-
         private void QueueCandidateDiscovery(string key, string playlistId)
         {
             lock (_pendingCandidateDiscovery)
@@ -390,30 +299,8 @@ namespace ListProtection.EntryPoints
             }
         }
 
-        // ── RefreshCompleted ───────────────────────────────────────────────
-
-        /// <summary>
-        /// Drains _pendingCandidateDiscovery when the refreshed item's path IS
-        /// the queued key or is a true ancestor of it (i.e. refreshedPath is a
-        /// prefix of key — the refreshed item contains the keyed folder).
-        ///
-        /// Crucially: we do NOT drain when key is a prefix of refreshedPath
-        /// (which would mean the refreshed item is a CHILD or SIBLING of the
-        /// keyed folder). This prevents sibling album folders from draining the
-        /// queue before the artist-level RefreshCompleted fires.
-        ///
-        /// Example (fix for drain-too-early bug, 2026-07-22):
-        ///   key = "\\x99\music\A Fine Frenzy" (artist folder, the parent)
-        ///   refreshedPath = "\\x99\music\A Fine Frenzy\[2007] One Cell in the Sea" → NO DRAIN (child)
-        ///   refreshedPath = "\\x99\music\A Fine Frenzy" → DRAIN (exact match / ancestor)
-        ///   refreshedPath = "\\x99\music" → DRAIN (true ancestor)
-        /// </summary>
         private void OnRefreshCompleted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
-            // RefreshCompleted is always checked — the pending queue may have been
-            // populated before EventDrivenRepairEnabled was toggled off, and we must
-            // drain it to avoid stale queue entries accumulating indefinitely.
-            // No new entries are added when disabled (all OnItemX handlers gate early).
             try
             {
                 var refreshedItem = e?.Argument?.Item;
@@ -436,9 +323,6 @@ namespace ListProtection.EntryPoints
                         var key = kvp.Key;
                         var isAudioKey = key.StartsWith("__audio__", StringComparison.Ordinal);
 
-                        // For path-keyed entries: drain only when the refreshed item IS
-                        // the keyed path or is a true ancestor (refreshedPath is a prefix
-                        // of key). Never drain on a child/sibling RefreshCompleted.
                         var isAncestorOrSelf = !isAudioKey &&
                             key.StartsWith(refreshedPath, StringComparison.OrdinalIgnoreCase);
 
@@ -480,6 +364,7 @@ namespace ListProtection.EntryPoints
                         playlistId,
                         _libraryManager,
                         _playlistManager,
+                        _collectionManager,
                         _userManager,
                         _logger)
                         .ContinueWith(t =>
@@ -497,8 +382,6 @@ namespace ListProtection.EntryPoints
                 _logger.ErrorException("[MissingMemberDetectionService] OnRefreshCompleted failed", ex);
             }
         }
-
-        // ── Cleanup ────────────────────────────────────────────────────────
 
         public void Dispose()
         {

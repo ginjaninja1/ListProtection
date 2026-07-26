@@ -1,6 +1,8 @@
 ﻿using ListProtection.Storage;
 using ListProtection.UI.MissingMembers;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
@@ -14,13 +16,16 @@ using System.Threading.Tasks;
 namespace ListProtection.Services
 {
     /// <summary>
-    /// Shared repair logic extracted from MissingMembersPageView so that
-    /// Tab 1 (Repair All) and Tab 2 (per-member Repair) can both call it.
+    /// Shared repair logic for both Playlists and Collections.
     ///
-    /// Single entry point: ExecuteRepairs(MissingMemberRow[]).
-    /// Callers assemble MissingMemberRow[] with Repair=true on the candidates
-    /// they want applied. This class handles AddToPlaylist / CreatePlaylist,
-    /// store updates, and ground truth maintenance — exactly as Task 8 proved.
+    /// Playlist repair: atomic remove-all → add-in-GT-order via IPlaylistManager.
+    ///   Uses ListItemEntryId for removal. skipDuplicates=false (GT is authority).
+    ///
+    /// Collection repair: targeted remove-missing → add-candidate via ICollectionManager.
+    ///   Collections have no user-defined order. RemoveFromCollection and AddToCollection
+    ///   both take InternalIds — no ListItemEntryId involved.
+    ///
+    /// Branch determined by GroundTruthEntry.IsCollection.
     /// </summary>
     public class PlaylistRepairService
     {
@@ -29,8 +34,16 @@ namespace ListProtection.Services
         private readonly PlaylistManagementStore _playlistStore;
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
+        private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
         private readonly ILogger _logger;
+
+        private struct RepairResult
+        {
+            public bool MissingChanged;
+            public bool CandidatesChanged;
+            public bool GroundTruthChanged;
+        }
 
         public PlaylistRepairService(
             MissingMembersStore missingMembersStore,
@@ -38,6 +51,7 @@ namespace ListProtection.Services
             PlaylistManagementStore playlistStore,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager,
             ILogger logger)
         {
@@ -46,15 +60,11 @@ namespace ListProtection.Services
             _playlistStore = playlistStore;
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
+            _collectionManager = collectionManager;
             _userManager = userManager;
             _logger = logger;
         }
 
-        /// <summary>
-        /// Executes repairs for all MissingMemberRows that have at least one
-        /// CandidateRow with Repair=true.
-        /// Synthetic rows (IsSynthetic=true) are skipped.
-        /// </summary>
         public async Task ExecuteRepairs(MissingMemberRow[] rows)
         {
             var user = _userManager.GetUserList(new UserQuery())[0];
@@ -64,8 +74,8 @@ namespace ListProtection.Services
 
             List<MissingMemberEntry> missingRecords;
             List<CandidateEntry> candidateRecords;
-            System.Collections.Generic.Dictionary<string, GroundTruthEntry> groundTruth;
-            System.Collections.Generic.HashSet<string> protectedIds;
+            Dictionary<string, GroundTruthEntry> groundTruth;
+            HashSet<string> protectedIds;
 
             plugin.WriterLock.Wait();
             try
@@ -80,8 +90,7 @@ namespace ListProtection.Services
                 plugin.WriterLock.Release();
             }
 
-            // Collect repaired candidates grouped by PlaylistId
-            var repairsByPlaylist = new Dictionary<string, List<(long missingInternalId, long candidateInternalId)>>(StringComparer.OrdinalIgnoreCase);
+            var repairsByList = new Dictionary<string, List<(long missingInternalId, long candidateInternalId)>>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var masterRow in rows)
             {
@@ -92,7 +101,6 @@ namespace ListProtection.Services
                 {
                     if (!candidateRow.Repair) continue;
 
-                    // Key format: "{playlistId}_{missingInternalId}_{candidateInternalId}"
                     var parts = candidateRow.Key.Split('_');
                     if (parts.Length < 3)
                     {
@@ -100,7 +108,7 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    var playlistId = parts[0];
+                    var listId = parts[0];
                     if (!long.TryParse(parts[1], out var missingInternalId) ||
                         !long.TryParse(parts[2], out var candidateInternalId))
                     {
@@ -109,7 +117,7 @@ namespace ListProtection.Services
                     }
 
                     var exists = candidateRecords.Any(c =>
-                        c.PlaylistId == playlistId &&
+                        c.PlaylistId == listId &&
                         c.MissingMember?.InternalId == missingInternalId &&
                         c.CandidateInternalId == candidateInternalId);
 
@@ -119,400 +127,60 @@ namespace ListProtection.Services
                         continue;
                     }
 
-                    if (!repairsByPlaylist.ContainsKey(playlistId))
-                        repairsByPlaylist[playlistId] = new List<(long, long)>();
+                    if (!repairsByList.ContainsKey(listId))
+                        repairsByList[listId] = new List<(long, long)>();
 
-                    repairsByPlaylist[playlistId].Add((missingInternalId, candidateInternalId));
+                    repairsByList[listId].Add((missingInternalId, candidateInternalId));
                 }
             }
 
-            if (repairsByPlaylist.Count == 0)
+            if (repairsByList.Count == 0)
             {
                 _logger.Info("[PlaylistRepairService] No repair candidates selected");
                 return;
             }
 
-            _logger.Info("[PlaylistRepairService] {0} playlist(s) to repair", repairsByPlaylist.Count);
+            _logger.Info("[PlaylistRepairService] {0} list(s) to repair", repairsByList.Count);
 
             var missingChanged = false;
             var candidatesChanged = false;
             var groundTruthChanged = false;
 
-            foreach (var kvp in repairsByPlaylist)
+            foreach (var kvp in repairsByList)
             {
-                var oldPlaylistId = kvp.Key;
+                var oldListId = kvp.Key;
                 var repairs = kvp.Value;
-                var candidateItemIds = repairs.Select(r => r.candidateInternalId).ToArray();
                 var repairedMissingIds = new HashSet<long>(repairs.Select(r => r.missingInternalId));
 
-                var playlistName = "(unknown)";
-                groundTruth.TryGetValue(oldPlaylistId, out var oldGtEntry);
-                if (oldGtEntry != null)
-                    playlistName = oldGtEntry.PlaylistName ?? "(unknown)";
+                groundTruth.TryGetValue(oldListId, out var oldGtEntry);
+                var listName = oldGtEntry?.PlaylistName ?? "(unknown)";
+                var isCollection = oldGtEntry?.IsCollection ?? false;
 
                 _logger.Info(
-                    "[PlaylistRepairService] Playlist='{0}' | repairing {1} member(s) | oldId={2}",
-                    playlistName, repairs.Count, oldPlaylistId);
+                    "[PlaylistRepairService] List='{0}' | Type={1} | repairing {2} member(s) | oldId={3}",
+                    listName, isCollection ? "Collection" : "Playlist", repairs.Count, oldListId);
 
-                if (!Guid.TryParseExact(oldPlaylistId, "N", out var oldGuid))
+                if (!Guid.TryParseExact(oldListId, "N", out var oldGuid))
                 {
-                    _logger.Warn("[PlaylistRepairService] Could not parse oldPlaylistId as Guid: {0}", oldPlaylistId);
+                    _logger.Warn("[PlaylistRepairService] Could not parse oldListId as Guid: {0}", oldListId);
                     continue;
                 }
 
-                var allPlaylists = _libraryManager.GetItemList(new InternalItemsQuery
-                {
-                    IncludeItemTypes = new[] { "Playlist" },
-                    Recursive = true
-                });
-
-                string activePlaylistId;
-                long activeInternalId;
-
-                var existingPlaylist = allPlaylists?.FirstOrDefault(p => p.Id == oldGuid);
-
-                if (existingPlaylist != null)
-                {
-                    // ── Playlist exists — atomic remove-all then add-in-order ──
-                    //
-                    // Approach: delete every current member then re-add all members
-                    // in the correct GT order (substituting candidates for missing slots).
-                    // This is bulletproof — no MoveItem, no index drift.
-                    // skipDuplicates=false because GT is the authority — if GT has
-                    // duplicates, the playlist should too.
-                    //
-                    // Suppression: PlaylistMaintenanceService is suppressed for the entire
-                    // remove→add window so it cannot touch GT. Repair owns the GT update.
-                    activePlaylistId = oldPlaylistId;
-                    activeInternalId = existingPlaylist.InternalId;
-                    var activePlaylist = existingPlaylist as MediaBrowser.Controller.Playlists.Playlist;
-
-                    _logger.Info(
-                        "[PlaylistRepairService] Playlist exists | Name='{0}' | InternalId={1} | atomic rebuild",
-                        existingPlaylist.Name ?? "(unnamed)", activeInternalId);
-
-                    // Map: missing InternalId → candidate InternalId for this batch
-                    var missingToCandidate = new Dictionary<long, long>();
-                    foreach (var (missingId, candidateId) in repairs)
-                        missingToCandidate[missingId] = candidateId;
-
-                    // Step 1 — read current live members to get their ListItemEntryIds for removal.
-                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
-                    // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
-                    var currentMembers = activePlaylist.GetItemList(new InternalItemsQuery());
-
-                    var currentEntryIds = currentMembers
-                        .Select(m => m.ListItemEntryId)
-                        .ToArray();
-
-                    _logger.Info(
-                        "[PlaylistRepairService] Removing {0} current member(s) from '{1}'",
-                        currentEntryIds.Length, playlistName);
-
-                    // Suppress PlaylistMaintenanceService for the entire remove→add cycle.
-                    // Cleared in finally to guarantee release even if an exception occurs.
-                    plugin.RepairSuppressedPlaylists.TryAdd(activeInternalId, 0);
-                    try
-                    {
-                        // Step 2 — remove all current members
-                        if (currentEntryIds.Length > 0)
-                        {
-                            try
-                            {
-                                await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
-                                _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, playlistName);
-                                continue;
-                            }
-                        }
-
-                        // Step 3 — build desired order from GT, substituting candidates for missing slots
-                        var desiredInternalIds = new List<long>();
-                        if (oldGtEntry?.Members != null)
-                        {
-                            foreach (var gtMember in oldGtEntry.Members)
-                            {
-                                if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
-                                {
-                                    desiredInternalIds.Add(candidateId);
-                                    _logger.Info(
-                                        "[PlaylistRepairService] Slot {0} ('{1}') → candidate InternalId={2}",
-                                        desiredInternalIds.Count - 1, gtMember.Name, candidateId);
-                                }
-                                else if (!repairedMissingIds.Contains(gtMember.InternalId))
-                                {
-                                    desiredInternalIds.Add(gtMember.InternalId);
-                                }
-                            }
-                        }
-
-                        _logger.Info(
-                            "[PlaylistRepairService] Re-adding {0} member(s) to '{1}' in GT order",
-                            desiredInternalIds.Count, playlistName);
-
-                        // Step 4 — add all in desired order, skipDuplicates=false (GT is authority)
-                        try
-                        {
-                            await _playlistManager.AddToPlaylist(
-                                activePlaylist,
-                                desiredInternalIds.ToArray(),
-                                skipDuplicates: false,
-                                user: user,
-                                cancellationToken: System.Threading.CancellationToken.None);
-
-                            _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.ErrorException("[PlaylistRepairService] AddToPlaylist failed for '{0}'", ex, playlistName);
-                            continue;
-                        }
-                    }
-                    finally
-                    {
-                        plugin.RepairSuppressedPlaylists.TryRemove(activeInternalId, out _);
-                    }
-
-                    // Step 5 — update GT by transforming the existing GT entry.
-                    // GT is the authority — never derive it from a live Emby readback,
-                    // which is subject to stale entity state, timing, and partial flushes.
-                    // Substitute candidate members for their repaired slots; all other
-                    // members carry forward unchanged. Member count must equal GT member count.
-                    var updatedMembers = new List<GroundTruthMember>(oldGtEntry.Members.Count);
-                    foreach (var gtMember in oldGtEntry.Members)
-                    {
-                        if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
-                        {
-                            // Resolve the candidate to a live item to get fresh metadata
-                            var liveCandidate = _libraryManager.GetItemById(candidateId);
-                            updatedMembers.Add(liveCandidate != null
-                                ? GroundTruthMemberFactory.FromItem(liveCandidate)
-                                : new GroundTruthMember
-                                {
-                                    InternalId = candidateId,
-                                    Name = gtMember.Name,
-                                    Path = gtMember.Path,
-                                    MediaType = gtMember.MediaType
-                                });
-                        }
-                        else
-                        {
-                            // Member was not part of this repair batch — carry forward as-is
-                            updatedMembers.Add(gtMember);
-                        }
-                    }
-
-                    groundTruth[activePlaylistId] = new GroundTruthEntry
-                    {
-                        PlaylistName = playlistName,
-                        CapturedAt = DateTime.UtcNow,
-                        Members = updatedMembers
-                    };
-                    groundTruthChanged = true;
-
-                    _logger.Info(
-                        "[PlaylistRepairService] Ground truth updated | GuidN={0} | members={1}",
-                        activePlaylistId, updatedMembers.Count);
-                }
+                RepairResult result;
+                if (isCollection)
+                    result = await ExecuteCollectionRepair(
+                        oldListId, oldGuid, oldGtEntry, listName, repairs, repairedMissingIds,
+                        missingRecords, candidateRecords, groundTruth, protectedIds);
                 else
-                {
-                    // ── Playlist is gone — CreatePlaylist ──────────────────
-                    // CreatePlaylist fires PlaylistItemsAdded synchronously during the await,
-                    // but at that point the new GuidN has not yet been registered in protectedIds,
-                    // so PlaylistMaintenanceService.IsProtected returns false and skips it naturally.
-                    // No suppression needed for this path.
-                    _logger.Info(
-                        "[PlaylistRepairService] Playlist GuidN={0} not found | calling CreatePlaylist with {1} item(s)",
-                        oldPlaylistId, candidateItemIds.Length);
+                    result = await ExecutePlaylistRepair(
+                        oldListId, oldGuid, oldGtEntry, listName, repairs, repairedMissingIds,
+                        candidateRecords, missingRecords, groundTruth, protectedIds, user);
 
-                    PlaylistCreationResult result;
-                    try
-                    {
-                        result = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
-                        {
-                            Name = playlistName,
-                            ItemIdList = candidateItemIds,
-                            MediaType = "Audio",
-                            User = user,
-                            IsPublic = true
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.ErrorException("[PlaylistRepairService] CreatePlaylist failed for '{0}'", ex, playlistName);
-                        continue;
-                    }
-
-                    _logger.Info(
-                        "[PlaylistRepairService] CreatePlaylist result | Id={0} | Name={1} | ItemAddedCount={2}",
-                        result?.Id ?? "(null)", result?.Name ?? "(null)", result?.ItemAddedCount ?? -1);
-
-                    if (result == null || string.IsNullOrEmpty(result.Id))
-                    {
-                        _logger.Error("[PlaylistRepairService] Null result for '{0}', skipping", playlistName);
-                        continue;
-                    }
-
-                    if (!long.TryParse(result.Id, out var newInternalId))
-                    {
-                        _logger.Error("[PlaylistRepairService] Could not parse result.Id: {0}", result.Id);
-                        continue;
-                    }
-
-                    var resolvedItems = _libraryManager.GetItemList(new InternalItemsQuery
-                    {
-                        ItemIds = new[] { newInternalId },
-                        IncludeItemTypes = new[] { "Playlist" }
-                    });
-
-                    if (resolvedItems.Length == 0)
-                    {
-                        _logger.Error("[PlaylistRepairService] Could not resolve Guid for InternalId={0}", newInternalId);
-                        continue;
-                    }
-
-                    var newGuidN = resolvedItems[0].Id.ToString("N");
-                    activePlaylistId = newGuidN;
-                    activeInternalId = newInternalId;
-
-                    _logger.Info(
-                        "[PlaylistRepairService] New playlist | GuidN={0} | InternalId={1}",
-                        newGuidN, newInternalId);
-
-                    protectedIds.Remove(oldPlaylistId);
-                    protectedIds.Add(newGuidN);
-                    plugin.WriterLock.Wait();
-                    try { _playlistStore.Save(protectedIds); }
-                    finally { plugin.WriterLock.Release(); }
-
-                    var migrated = 0;
-                    foreach (var record in missingRecords)
-                    {
-                        if (record.PlaylistId != oldPlaylistId) continue;
-                        if (repairedMissingIds.Contains(record.Member?.InternalId ?? -1)) continue;
-                        record.PlaylistId = newGuidN;
-                        record.PlaylistName = playlistName;
-                        migrated++;
-                    }
-                    if (migrated > 0) missingChanged = true;
-
-                    var migratedCandidates = 0;
-                    foreach (var c in candidateRecords)
-                    {
-                        if (c.PlaylistId != oldPlaylistId) continue;
-                        if (repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1)) continue;
-                        c.PlaylistId = newGuidN;
-                        c.PlaylistName = playlistName;
-                        migratedCandidates++;
-                    }
-                    if (migratedCandidates > 0) candidatesChanged = true;
-
-                    // PROVEN: Playlist.GetItemList returns members in correct playlist order.
-                    // ILibraryManager.GetItemList with ListIds returns DB insertion order — do not use.
-                    var newPlaylistEntity = resolvedItems[0] as MediaBrowser.Controller.Playlists.Playlist;
-                    var capturedMembers = newPlaylistEntity != null
-                        ? newPlaylistEntity.GetItemList(new InternalItemsQuery())
-                        : System.Array.Empty<BaseItem>();
-
-                    var newMembers = new List<GroundTruthMember>(capturedMembers.Length);
-                    foreach (var m in capturedMembers)
-                        newMembers.Add(GroundTruthMemberFactory.FromItem(m));
-
-                    if (oldGtEntry?.Members != null)
-                    {
-                        foreach (var oldMember in oldGtEntry.Members)
-                        {
-                            if (repairedMissingIds.Contains(oldMember.InternalId)) continue;
-                            if (newMembers.Any(m => m.InternalId == oldMember.InternalId)) continue;
-                            newMembers.Add(oldMember);
-                        }
-                    }
-
-                    groundTruth[newGuidN] = new GroundTruthEntry
-                    {
-                        PlaylistName = playlistName,
-                        CapturedAt = DateTime.UtcNow,
-                        Members = newMembers
-                    };
-
-                    if (groundTruth.ContainsKey(oldPlaylistId))
-                        groundTruth.Remove(oldPlaylistId);
-
-                    groundTruthChanged = true;
-
-                    _logger.Info(
-                        "[PlaylistRepairService] GroundTruthStore entry written | GuidN={0} | members={1}",
-                        newGuidN, newMembers.Count);
-                }
-
-                // ── Capture names for event payload BEFORE removing records ──
-                var payloadLines = new List<string>();
-                foreach (var (missingId, candidateId) in repairs)
-                {
-                    var candidate = candidateRecords.Find(c =>
-                        c.CandidateInternalId == candidateId &&
-                        c.MissingMember?.InternalId == missingId);
-                    var missingRecord = missingRecords.Find(r =>
-                        r.Member?.InternalId == missingId);
-
-                    var missingName = missingRecord?.Member?.Name ?? "(unknown)";
-                    var candidateName = candidate?.CandidateName ?? "(unknown)";
-                    var candidatePath = candidate?.CandidatePath ?? string.Empty;
-
-                    var pos = GetGroundTruthPosition(missingId, oldGtEntry);
-                    var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
-
-                    payloadLines.Add(posPrefix + missingName + " → " + candidateName + " | " + candidatePath);
-                }
-
-                // Remove repaired missing records
-                for (var i = missingRecords.Count - 1; i >= 0; i--)
-                {
-                    var r = missingRecords[i];
-                    var matchesPlaylist = r.PlaylistId == oldPlaylistId || r.PlaylistId == activePlaylistId;
-                    if (matchesPlaylist && repairedMissingIds.Contains(r.Member?.InternalId ?? -1))
-                    {
-                        missingRecords.RemoveAt(i);
-                        missingChanged = true;
-                    }
-                }
-
-                // Remove candidate entries for repaired members
-                for (var i = candidateRecords.Count - 1; i >= 0; i--)
-                {
-                    var c = candidateRecords[i];
-                    var matchesPlaylist = c.PlaylistId == oldPlaylistId || c.PlaylistId == activePlaylistId;
-                    if (matchesPlaylist && repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1))
-                    {
-                        candidateRecords.RemoveAt(i);
-                        candidatesChanged = true;
-                    }
-                }
-
-                _logger.Info("[PlaylistRepairService] Repair complete | playlist='{0}' | activeId={1}", playlistName, activePlaylistId);
-
-                // Write Repair event
-                try
-                {
-                    ListProtectionPlugin.Instance.EventStore.Append(new EventEntry
-                    {
-                        EventType = "Repair",
-                        PlaylistId = activePlaylistId,
-                        PlaylistName = playlistName,
-                        OccurredAt = DateTime.UtcNow,
-                        Payload = string.Join("\n", payloadLines)
-                    });
-                }
-                catch (Exception evEx)
-                {
-                    _logger.ErrorException("[PlaylistRepairService] Failed to write Repair event", evEx);
-                }
+                if (result.MissingChanged) missingChanged = true;
+                if (result.CandidatesChanged) candidatesChanged = true;
+                if (result.GroundTruthChanged) groundTruthChanged = true;
             }
 
-            // Persist — acquire writer lock for the full save block
             plugin.WriterLock.Wait();
             try
             {
@@ -540,7 +208,531 @@ namespace ListProtection.Services
             _logger.Info("[PlaylistRepairService] ExecuteRepairs complete");
         }
 
-        // ── Helpers ────────────────────────────────────────────────────────
+        // ── Collection repair ──────────────────────────────────────────────
+
+        private async Task<RepairResult> ExecuteCollectionRepair(
+            string oldListId,
+            Guid oldGuid,
+            GroundTruthEntry oldGtEntry,
+            string listName,
+            List<(long missingInternalId, long candidateInternalId)> repairs,
+            HashSet<long> repairedMissingIds,
+            List<MissingMemberEntry> missingRecords,
+            List<CandidateEntry> candidateRecords,
+            Dictionary<string, GroundTruthEntry> groundTruth,
+            HashSet<string> protectedIds)
+        {
+            var result = default(RepairResult);
+
+            var allCollections = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "BoxSet" },
+                Recursive = true
+            });
+
+            var existingCollection = allCollections?.FirstOrDefault(c => c.Id == oldGuid) as BoxSet;
+
+            string activeListId;
+
+            if (existingCollection != null)
+            {
+                activeListId = oldListId;
+
+                var missingToCandidate = new Dictionary<long, long>();
+                foreach (var (missingId, candidateId) in repairs)
+                    missingToCandidate[missingId] = candidateId;
+
+                var removeIds = repairs.Select(r => r.missingInternalId).ToArray();
+                _logger.Info("[PlaylistRepairService] Collection: removing {0} member(s) from '{1}'", removeIds.Length, listName);
+                try
+                {
+                    _collectionManager.RemoveFromCollection(existingCollection, removeIds);
+                }
+                catch (Exception ex)
+                {
+                    _logger.ErrorException("[PlaylistRepairService] RemoveFromCollection failed for '{0}'", ex, listName);
+                    return result;
+                }
+
+                var addIds = repairs.Select(r => r.candidateInternalId).ToArray();
+                _logger.Info("[PlaylistRepairService] Collection: adding {0} candidate(s) to '{1}'", addIds.Length, listName);
+                try
+                {
+                    await _collectionManager.AddToCollection(existingCollection.InternalId, addIds);
+                }
+                catch (Exception ex)
+                {
+                    _logger.ErrorException("[PlaylistRepairService] AddToCollection failed for '{0}'", ex, listName);
+                    return result;
+                }
+
+                // Update GT — substitute candidates for repaired slots
+                var updatedMembers = new List<GroundTruthMember>();
+                if (oldGtEntry?.Members != null)
+                {
+                    foreach (var gtMember in oldGtEntry.Members)
+                    {
+                        if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                        {
+                            var liveCandidate = _libraryManager.GetItemById(candidateId);
+                            updatedMembers.Add(liveCandidate != null
+                                ? GroundTruthMemberFactory.FromItem(liveCandidate)
+                                : new GroundTruthMember { InternalId = candidateId, Name = gtMember.Name, Path = gtMember.Path, MediaType = gtMember.MediaType });
+                        }
+                        else
+                        {
+                            updatedMembers.Add(gtMember);
+                        }
+                    }
+                }
+
+                groundTruth[activeListId] = new GroundTruthEntry
+                {
+                    ListType = "Collection",
+                    PlaylistName = listName,
+                    CapturedAt = DateTime.UtcNow,
+                    Members = updatedMembers
+                };
+                result.GroundTruthChanged = true;
+            }
+            else
+            {
+                // Collection gone — recreate
+                _logger.Info("[PlaylistRepairService] Collection GuidN={0} not found — calling CreateCollection", oldListId);
+
+                var missingToCandidate = new Dictionary<long, long>();
+                foreach (var (missingId, candidateId) in repairs)
+                    missingToCandidate[missingId] = candidateId;
+
+                var allMemberIds = new List<long>();
+                if (oldGtEntry?.Members != null)
+                {
+                    foreach (var m in oldGtEntry.Members)
+                        allMemberIds.Add(missingToCandidate.TryGetValue(m.InternalId, out var cid) ? cid : m.InternalId);
+                }
+
+                BoxSet newCollection;
+                try
+                {
+                    newCollection = await _collectionManager.CreateCollection(new CollectionCreationOptions
+                    {
+                        Name = listName,
+                        ItemIdList = allMemberIds.ToArray()
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.ErrorException("[PlaylistRepairService] CreateCollection failed for '{0}'", ex, listName);
+                    return result;
+                }
+
+                if (newCollection == null)
+                {
+                    _logger.Error("[PlaylistRepairService] CreateCollection returned null for '{0}'", listName);
+                    return result;
+                }
+
+                var newGuidN = newCollection.Id.ToString("N");
+                activeListId = newGuidN;
+
+                _logger.Info("[PlaylistRepairService] New collection | GuidN={0} | InternalId={1}", newGuidN, newCollection.InternalId);
+
+                protectedIds.Remove(oldListId);
+                protectedIds.Add(newGuidN);
+                SaveProtectedIds(protectedIds);
+
+                var migrateResult = MigrateStoreIds(missingRecords, candidateRecords, oldListId, newGuidN, listName, repairedMissingIds);
+                result.MissingChanged |= migrateResult.missingChanged;
+                result.CandidatesChanged |= migrateResult.candidatesChanged;
+
+                var capturedMembers = newCollection.GetItemList(new InternalItemsQuery());
+                var newMembers = capturedMembers.Select(m => GroundTruthMemberFactory.FromItem(m)).ToList();
+
+                groundTruth[newGuidN] = new GroundTruthEntry
+                {
+                    ListType = "Collection",
+                    PlaylistName = listName,
+                    CapturedAt = DateTime.UtcNow,
+                    Members = newMembers
+                };
+                if (groundTruth.ContainsKey(oldListId))
+                    groundTruth.Remove(oldListId);
+                result.GroundTruthChanged = true;
+            }
+
+            WriteRepairEvent(activeListId, listName, repairs, repairedMissingIds, missingRecords, candidateRecords, oldGtEntry);
+
+            var removeResult = RemoveRepairedRecords(missingRecords, candidateRecords, oldListId, activeListId, repairedMissingIds);
+            result.MissingChanged |= removeResult.missingChanged;
+            result.CandidatesChanged |= removeResult.candidatesChanged;
+
+            _logger.Info("[PlaylistRepairService] Collection repair complete | '{0}' | activeId={1}", listName, activeListId);
+            return result;
+        }
+
+        // ── Playlist repair ────────────────────────────────────────────────
+
+        private async Task<RepairResult> ExecutePlaylistRepair(
+            string oldListId,
+            Guid oldGuid,
+            GroundTruthEntry oldGtEntry,
+            string listName,
+            List<(long missingInternalId, long candidateInternalId)> repairs,
+            HashSet<long> repairedMissingIds,
+            List<CandidateEntry> candidateRecords,
+            List<MissingMemberEntry> missingRecords,
+            Dictionary<string, GroundTruthEntry> groundTruth,
+            HashSet<string> protectedIds,
+            User user)
+        {
+            var result = default(RepairResult);
+            var plugin = ListProtectionPlugin.Instance;
+
+            var allPlaylists = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                IncludeItemTypes = new[] { "Playlist" },
+                Recursive = true
+            });
+
+            var existingPlaylist = allPlaylists?.FirstOrDefault(p => p.Id == oldGuid);
+
+            string activeListId;
+
+            if (existingPlaylist != null)
+            {
+                activeListId = oldListId;
+                var activeInternalId = existingPlaylist.InternalId;
+                var activePlaylist = existingPlaylist as Playlist;
+
+                var missingToCandidate = new Dictionary<long, long>();
+                foreach (var (missingId, candidateId) in repairs)
+                    missingToCandidate[missingId] = candidateId;
+
+                // PROVEN: Playlist.GetItemList returns members in ListItemOrder (correct playlist position).
+                var currentMembers = activePlaylist.GetItemList(new InternalItemsQuery());
+                var currentEntryIds = currentMembers.Select(m => m.ListItemEntryId).ToArray();
+
+                plugin.RepairSuppressedPlaylists.TryAdd(activeInternalId, 0);
+                try
+                {
+                    if (currentEntryIds.Length > 0)
+                    {
+                        try
+                        {
+                            await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
+                            _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, listName);
+                            return result;
+                        }
+                    }
+
+                    var desiredInternalIds = new List<long>();
+                    if (oldGtEntry?.Members != null)
+                    {
+                        foreach (var gtMember in oldGtEntry.Members)
+                        {
+                            if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                                desiredInternalIds.Add(candidateId);
+                            else if (!repairedMissingIds.Contains(gtMember.InternalId))
+                                desiredInternalIds.Add(gtMember.InternalId);
+                        }
+                    }
+
+                    try
+                    {
+                        await _playlistManager.AddToPlaylist(
+                            activePlaylist,
+                            desiredInternalIds.ToArray(),
+                            skipDuplicates: false,
+                            user: user,
+                            cancellationToken: CancellationToken.None);
+                        _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.ErrorException("[PlaylistRepairService] AddToPlaylist failed for '{0}'", ex, listName);
+                        return result;
+                    }
+                }
+                finally
+                {
+                    plugin.RepairSuppressedPlaylists.TryRemove(activeInternalId, out _);
+                }
+
+                // Update GT
+                var updatedMembers = new List<GroundTruthMember>();
+                if (oldGtEntry?.Members != null)
+                {
+                    foreach (var gtMember in oldGtEntry.Members)
+                    {
+                        if (missingToCandidate.TryGetValue(gtMember.InternalId, out var candidateId))
+                        {
+                            var liveCandidate = _libraryManager.GetItemById(candidateId);
+                            updatedMembers.Add(liveCandidate != null
+                                ? GroundTruthMemberFactory.FromItem(liveCandidate)
+                                : new GroundTruthMember { InternalId = candidateId, Name = gtMember.Name, Path = gtMember.Path, MediaType = gtMember.MediaType });
+                        }
+                        else
+                        {
+                            updatedMembers.Add(gtMember);
+                        }
+                    }
+                }
+
+                groundTruth[activeListId] = new GroundTruthEntry
+                {
+                    ListType = "Playlist",
+                    PlaylistName = listName,
+                    IsPublic = oldGtEntry?.IsPublic,
+                    CapturedAt = DateTime.UtcNow,
+                    Members = updatedMembers
+                };
+                result.GroundTruthChanged = true;
+
+                _logger.Info("[PlaylistRepairService] Ground truth updated | GuidN={0} | members={1}", activeListId, updatedMembers.Count);
+            }
+            else
+            {
+                // Playlist gone — recreate
+                _logger.Info("[PlaylistRepairService] Playlist GuidN={0} not found — calling CreatePlaylist", oldListId);
+
+                var missingToCandidate = new Dictionary<long, long>();
+                foreach (var (missingId, candidateId) in repairs)
+                    missingToCandidate[missingId] = candidateId;
+
+                var candidateItemIds = BuildDesiredOrder(oldGtEntry, missingToCandidate, repairedMissingIds);
+
+                PlaylistCreationResult createResult;
+                try
+                {
+                    createResult = await _playlistManager.CreatePlaylist(new PlaylistCreationRequest
+                    {
+                        Name = listName,
+                        ItemIdList = candidateItemIds,
+                        MediaType = "Audio",
+                        User = user,
+                        IsPublic = oldGtEntry?.IsPublic ?? true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.ErrorException("[PlaylistRepairService] CreatePlaylist failed for '{0}'", ex, listName);
+                    return result;
+                }
+
+                if (createResult == null || string.IsNullOrEmpty(createResult.Id))
+                {
+                    _logger.Error("[PlaylistRepairService] Null result for '{0}'", listName);
+                    return result;
+                }
+
+                if (!long.TryParse(createResult.Id, out var newInternalId))
+                {
+                    _logger.Error("[PlaylistRepairService] Could not parse result.Id: {0}", createResult.Id);
+                    return result;
+                }
+
+                var resolvedItems = _libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    ItemIds = new[] { newInternalId },
+                    IncludeItemTypes = new[] { "Playlist" }
+                });
+
+                if (resolvedItems.Length == 0)
+                {
+                    _logger.Error("[PlaylistRepairService] Could not resolve Guid for InternalId={0}", newInternalId);
+                    return result;
+                }
+
+                var newGuidN = resolvedItems[0].Id.ToString("N");
+                activeListId = newGuidN;
+
+                _logger.Info("[PlaylistRepairService] New playlist | GuidN={0} | InternalId={1}", newGuidN, newInternalId);
+
+                protectedIds.Remove(oldListId);
+                protectedIds.Add(newGuidN);
+                SaveProtectedIds(protectedIds);
+
+                var migrateResult = MigrateStoreIds(missingRecords, candidateRecords, oldListId, newGuidN, listName, repairedMissingIds);
+                result.MissingChanged |= migrateResult.missingChanged;
+                result.CandidatesChanged |= migrateResult.candidatesChanged;
+
+                var newPlaylistEntity = resolvedItems[0] as Playlist;
+                var capturedMembers = newPlaylistEntity != null
+                    ? newPlaylistEntity.GetItemList(new InternalItemsQuery())
+                    : Array.Empty<BaseItem>();
+
+                var newMembers = capturedMembers.Select(m => GroundTruthMemberFactory.FromItem(m)).ToList();
+
+                if (oldGtEntry?.Members != null)
+                {
+                    foreach (var oldMember in oldGtEntry.Members)
+                    {
+                        if (repairedMissingIds.Contains(oldMember.InternalId)) continue;
+                        if (newMembers.Any(m => m.InternalId == oldMember.InternalId)) continue;
+                        newMembers.Add(oldMember);
+                    }
+                }
+
+                groundTruth[newGuidN] = new GroundTruthEntry
+                {
+                    ListType = "Playlist",
+                    PlaylistName = listName,
+                    IsPublic = oldGtEntry?.IsPublic,
+                    CapturedAt = DateTime.UtcNow,
+                    Members = newMembers
+                };
+                if (groundTruth.ContainsKey(oldListId))
+                    groundTruth.Remove(oldListId);
+                result.GroundTruthChanged = true;
+
+                _logger.Info("[PlaylistRepairService] GroundTruthStore entry written | GuidN={0} | members={1}", newGuidN, newMembers.Count);
+            }
+
+            WriteRepairEvent(activeListId, listName, repairs, repairedMissingIds, missingRecords, candidateRecords, oldGtEntry);
+
+            var removeResult = RemoveRepairedRecords(missingRecords, candidateRecords, oldListId, activeListId, repairedMissingIds);
+            result.MissingChanged |= removeResult.missingChanged;
+            result.CandidatesChanged |= removeResult.candidatesChanged;
+
+            _logger.Info("[PlaylistRepairService] Playlist repair complete | '{0}' | activeId={1}", listName, activeListId);
+            return result;
+        }
+
+        // ── Shared helpers ─────────────────────────────────────────────────
+
+        private long[] BuildDesiredOrder(
+            GroundTruthEntry oldGtEntry,
+            Dictionary<long, long> missingToCandidate,
+            HashSet<long> repairedMissingIds)
+        {
+            var ids = new List<long>();
+            if (oldGtEntry?.Members == null) return ids.ToArray();
+            foreach (var m in oldGtEntry.Members)
+            {
+                if (missingToCandidate.TryGetValue(m.InternalId, out var candidateId))
+                    ids.Add(candidateId);
+                else if (!repairedMissingIds.Contains(m.InternalId))
+                    ids.Add(m.InternalId);
+            }
+            return ids.ToArray();
+        }
+
+        private (bool missingChanged, bool candidatesChanged) MigrateStoreIds(
+            List<MissingMemberEntry> missingRecords,
+            List<CandidateEntry> candidateRecords,
+            string oldId,
+            string newId,
+            string listName,
+            HashSet<long> repairedMissingIds)
+        {
+            var missingChanged = false;
+            var candidatesChanged = false;
+
+            foreach (var record in missingRecords)
+            {
+                if (record.PlaylistId != oldId) continue;
+                if (repairedMissingIds.Contains(record.Member?.InternalId ?? -1)) continue;
+                record.PlaylistId = newId;
+                record.PlaylistName = listName;
+                missingChanged = true;
+            }
+            foreach (var c in candidateRecords)
+            {
+                if (c.PlaylistId != oldId) continue;
+                if (repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1)) continue;
+                c.PlaylistId = newId;
+                c.PlaylistName = listName;
+                candidatesChanged = true;
+            }
+
+            return (missingChanged, candidatesChanged);
+        }
+
+        private (bool missingChanged, bool candidatesChanged) RemoveRepairedRecords(
+            List<MissingMemberEntry> missingRecords,
+            List<CandidateEntry> candidateRecords,
+            string oldListId,
+            string activeListId,
+            HashSet<long> repairedMissingIds)
+        {
+            var missingChanged = false;
+            var candidatesChanged = false;
+
+            for (var i = missingRecords.Count - 1; i >= 0; i--)
+            {
+                var r = missingRecords[i];
+                if ((r.PlaylistId == oldListId || r.PlaylistId == activeListId) &&
+                    repairedMissingIds.Contains(r.Member?.InternalId ?? -1))
+                {
+                    missingRecords.RemoveAt(i);
+                    missingChanged = true;
+                }
+            }
+            for (var i = candidateRecords.Count - 1; i >= 0; i--)
+            {
+                var c = candidateRecords[i];
+                if ((c.PlaylistId == oldListId || c.PlaylistId == activeListId) &&
+                    repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1))
+                {
+                    candidateRecords.RemoveAt(i);
+                    candidatesChanged = true;
+                }
+            }
+
+            return (missingChanged, candidatesChanged);
+        }
+
+        private void WriteRepairEvent(
+            string activeListId,
+            string listName,
+            List<(long missingInternalId, long candidateInternalId)> repairs,
+            HashSet<long> repairedMissingIds,
+            List<MissingMemberEntry> missingRecords,
+            List<CandidateEntry> candidateRecords,
+            GroundTruthEntry oldGtEntry)
+        {
+            try
+            {
+                var payloadLines = new List<string>();
+                foreach (var (missingId, candidateId) in repairs)
+                {
+                    var candidate = candidateRecords.Find(c =>
+                        c.CandidateInternalId == candidateId && c.MissingMember?.InternalId == missingId);
+                    var missingRecord = missingRecords.Find(r => r.Member?.InternalId == missingId);
+                    var missingName = missingRecord?.Member?.Name ?? "(unknown)";
+                    var candidateName = candidate?.CandidateName ?? "(unknown)";
+                    var candidatePath = candidate?.CandidatePath ?? string.Empty;
+                    var pos = GetGroundTruthPosition(missingId, oldGtEntry);
+                    var posPrefix = pos >= 0 ? "[POS " + (pos + 1) + "] " : string.Empty;
+                    payloadLines.Add(posPrefix + missingName + " → " + candidateName + " | " + candidatePath);
+                }
+
+                ListProtectionPlugin.Instance.EventStore.Append(new EventEntry
+                {
+                    EventType = "Repair",
+                    PlaylistId = activeListId,
+                    PlaylistName = listName,
+                    OccurredAt = DateTime.UtcNow,
+                    Payload = string.Join("\n", payloadLines)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[PlaylistRepairService] Failed to write Repair event", ex);
+            }
+        }
+
+        private void SaveProtectedIds(HashSet<string> protectedIds)
+        {
+            var plugin = ListProtectionPlugin.Instance;
+            plugin.WriterLock.Wait();
+            try { _playlistStore.Save(protectedIds); }
+            finally { plugin.WriterLock.Release(); }
+        }
 
         private static int GetGroundTruthPosition(long internalId, GroundTruthEntry gtEntry)
         {

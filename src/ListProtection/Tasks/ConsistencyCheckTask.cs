@@ -1,5 +1,6 @@
 ﻿using ListProtection.EntryPoints;
 using ListProtection.Services;
+using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
@@ -11,27 +12,11 @@ using System.Threading.Tasks;
 
 namespace ListProtection.Tasks
 {
-    /// <summary>
-    /// Full pipeline consistency check — detect → discover → auto-repair.
-    ///
-    /// Runs as ILibraryPostScanTask (after every library scan) and as a daily
-    /// scheduled task at 03:00. Also manually triggerable from the Emby dashboard.
-    ///
-    /// Steps:
-    ///   1. MissingMemberDetector.RunDetection  — compares GT against live playlists,
-    ///      records any newly absent members.
-    ///   2. CandidateDiscoverer.RunDiscovery    — scores library items against all
-    ///      missing members, updates candidate store.
-    ///   3. AutoRepairer.RunAutoRepair          — applies auto-repair for any missing
-    ///      member whose best candidate passes the eligibility gate.
-    ///
-    /// Replaces: DetectMissingMembersTask, CandidateDiscoveryTask,
-    ///           PostScanDetectTask, PostScanCandidateTask.
-    /// </summary>
     public class ConsistencyCheckTask : ILibraryPostScanTask, IScheduledTask
     {
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
+        private readonly ICollectionManager _collectionManager;
         private readonly IUserManager _userManager;
         private readonly ILogger _logger;
 
@@ -43,24 +28,22 @@ namespace ListProtection.Tasks
         public ConsistencyCheckTask(
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
+            ICollectionManager collectionManager,
             IUserManager userManager,
             ILogManager logManager)
         {
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
+            _collectionManager = collectionManager;
             _userManager = userManager;
             _logger = logManager.GetLogger(nameof(ConsistencyCheckTask));
         }
-
-        // ── ILibraryPostScanTask ───────────────────────────────────────────
 
         public Task Run(IProgress<double> progress, CancellationToken cancellationToken)
         {
             _logger.Info("[ConsistencyCheckTask] Post-scan trigger");
             return RunPipeline(progress, cancellationToken);
         }
-
-        // ── IScheduledTask ─────────────────────────────────────────────────
 
         public Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
@@ -74,13 +57,11 @@ namespace ListProtection.Tasks
             {
                 new TaskTriggerInfo
                 {
-                    Type            = TaskTriggerInfo.TriggerDaily,
-                    TimeOfDayTicks  = TimeSpan.FromHours(3).Ticks
+                    Type           = TaskTriggerInfo.TriggerDaily,
+                    TimeOfDayTicks = TimeSpan.FromHours(3).Ticks
                 }
             };
         }
-
-        // ── Pipeline ───────────────────────────────────────────────────────
 
         private async Task RunPipeline(IProgress<double> progress, CancellationToken cancellationToken)
         {
@@ -105,6 +86,7 @@ namespace ListProtection.Tasks
                     null,
                     _libraryManager,
                     _playlistManager,
+                    _collectionManager,
                     _userManager,
                     _logger);
 

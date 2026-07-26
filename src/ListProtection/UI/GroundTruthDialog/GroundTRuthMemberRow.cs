@@ -2,16 +2,15 @@
 
 namespace ListProtection.UI.GroundTruthDialog
 {
-    /// <summary>
-    /// Read-only row for the Ground Truth dialog grid.
-    /// One row per member in the playlist's ground truth snapshot.
-    /// </summary>
     public class GroundTruthMemberRow
     {
         [DisplayName("#")]
         public int Position { get; set; }
 
-        [DisplayName("Track")]
+        [DisplayName("Type")]
+        public string MediaType { get; set; }
+
+        [DisplayName("Member")]
         public string Name { get; set; }
 
         [DisplayName("Path")]

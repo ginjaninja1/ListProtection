@@ -6,11 +6,6 @@ using System;
 
 namespace ListProtection.UI.GroundTruthDialog
 {
-    /// <summary>
-    /// Full-screen dialog UI showing ground truth members for a single playlist.
-    /// Read-only — no editable columns, no onChangeCommand.
-    /// Extends EditableObjectBase (not EditableOptionsBase) — matches dialog pattern.
-    /// </summary>
     public class GroundTruthDialogUI : EditableObjectBase
     {
         public override string EditorTitle => null;
@@ -28,11 +23,10 @@ namespace ListProtection.UI.GroundTruthDialog
                 false,
                 true,
                 true,   // search
-                true)   // filter
+                true)   // filter row
             {
                 heightMode = DxGridOptions.GridHeightMode.fullHeight,
                 columnAutoWidth = true
-                // No editing, no onChangeCommand — read-only
             };
 
             if (options.columns != null)
@@ -41,11 +35,16 @@ namespace ListProtection.UI.GroundTruthDialog
                 {
                     col.allowEditing = false;
 
-                    if (col.dataField == "Position")
+                    switch (col.dataField)
                     {
-                        col.width = 50;
-                        col.sortIndex = 0;
-                        col.sortOrder = "asc";
+                        case "Position":
+                            col.width = 50;
+                            col.sortIndex = 0;
+                            col.sortOrder = "asc";
+                            break;
+                        case "MediaType":
+                            col.width = 90;
+                            break;
                     }
                 }
             }

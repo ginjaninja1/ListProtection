@@ -3,26 +3,11 @@ using ListProtection.UIBaseClasses.Views;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Plugins.UI.Views;
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace ListProtection.UI.GroundTruthDialog
 {
-    /// <summary>
-    /// Full-screen read-only dialog showing the ground truth member snapshot
-    /// for a single protected playlist. Launched from Tab 1 OpenGroundTruth column.
-    ///
-    /// No editing — no onChangeCommand. Any commandId (including "DialogCancel")
-    /// is unhandled and delegates to base.RunCommand which returns null,
-    /// causing the framework to close the dialog.
-    ///
-    /// Pattern: PluginDialogView (UIBaseClasses/Views/PluginDialogueView.cs)
-    ///   ShowDialogFullScreen = true
-    ///   AllowOk = false
-    ///   AllowCancel = true
-    ///   Caption: "Members: {playlistName}"
-    /// </summary>
     internal sealed class GroundTruthDialogView : PluginDialogView
     {
         private readonly string _playlistName;
@@ -43,7 +28,7 @@ namespace ListProtection.UI.GroundTruthDialog
             AllowOk = false;
             AllowCancel = true;
 
-            ContentData = Build(playlistId, playlistName, groundTruthStore);
+            ContentData = Build(playlistId, groundTruthStore);
         }
 
         public override string Caption => "Members: " + _playlistName;
@@ -54,11 +39,6 @@ namespace ListProtection.UI.GroundTruthDialog
         public override Task OnOkCommand(string providerId, string commandId, string data)
             => Task.CompletedTask;
 
-        /// <summary>
-        /// Read-only dialog — no interactive commands expected.
-        /// All commandIds (including "DialogCancel") delegate to base which
-        /// returns null, causing the framework to close the dialog.
-        /// </summary>
         public override Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
             _logger.Info(
@@ -68,12 +48,7 @@ namespace ListProtection.UI.GroundTruthDialog
             return base.RunCommand(itemId, commandId, data);
         }
 
-        // ── Build ──────────────────────────────────────────────────────────
-
-        private static GroundTruthDialogUI Build(
-            string playlistId,
-            string playlistName,
-            GroundTruthStore groundTruthStore)
+        private static GroundTruthDialogUI Build(string playlistId, GroundTruthStore groundTruthStore)
         {
             List<GroundTruthMember> members = null;
 
@@ -87,6 +62,7 @@ namespace ListProtection.UI.GroundTruthDialog
                     new GroundTruthMemberRow
                     {
                         Position = 0,
+                        MediaType = string.Empty,
                         Name = "No members captured",
                         Path = string.Empty
                     }
@@ -99,6 +75,7 @@ namespace ListProtection.UI.GroundTruthDialog
                 rows[i] = new GroundTruthMemberRow
                 {
                     Position = i + 1,
+                    MediaType = members[i].MediaType ?? string.Empty,
                     Name = members[i].Name ?? "(unnamed)",
                     Path = members[i].Path ?? string.Empty
                 };

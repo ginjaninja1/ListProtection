@@ -25,6 +25,19 @@ namespace ListProtection.EntryPoints
         private readonly Dictionary<string, List<string>> _pendingCandidateDiscovery
             = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
+        // Item types that are direct GT members and detected by InternalId lookup.
+        // Folder-like types are handled separately by path-prefix scan.
+        private static readonly HashSet<string> _directMemberTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Audio", "Movie", "Episode", "Series", "BoxSet"
+        };
+
+        // Item types that represent containers — detected by scanning GT member paths.
+        private static readonly HashSet<string> _folderTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Folder", "MusicAlbum", "MusicArtist"
+        };
+
         public MissingMemberDetectionService(
             ILibraryManager libraryManager,
             IProviderManager providerManager,
@@ -78,9 +91,9 @@ namespace ListProtection.EntryPoints
 
                 var typeName = item.GetType().Name;
 
-                if (typeName == "Audio")
-                    HandleAudioRemoved(item.InternalId, plugin);
-                else if (typeName == "Folder" || typeName == "MusicAlbum")
+                if (_directMemberTypes.Contains(typeName))
+                    HandleDirectItemRemoved(item.InternalId, typeName, plugin);
+                else if (_folderTypes.Contains(typeName))
                     HandleFolderRemoved(item.Path, plugin);
             }
             catch (Exception ex)
@@ -89,12 +102,16 @@ namespace ListProtection.EntryPoints
             }
         }
 
-        private void HandleAudioRemoved(long removedInternalId, ListProtectionPlugin plugin)
+        /// <summary>
+        /// Handles removal of any item that may appear directly as a GT member (Audio, Movie,
+        /// Episode, Series, BoxSet). Matches by InternalId across all GT entries.
+        /// </summary>
+        private void HandleDirectItemRemoved(long removedInternalId, string typeName, ListProtectionPlugin plugin)
         {
             if (removedInternalId == 0) return;
 
             var groundTruth = plugin.GroundTruthStore.Load();
-            var affectedPlaylists = new List<string>();
+            var affectedLists = new List<string>();
 
             foreach (var kvp in groundTruth)
             {
@@ -102,19 +119,21 @@ namespace ListProtection.EntryPoints
                 {
                     if (member.InternalId == removedInternalId)
                     {
-                        affectedPlaylists.Add(kvp.Key);
+                        affectedLists.Add(kvp.Key);
                         break;
                     }
                 }
             }
 
-            foreach (var playlistId in affectedPlaylists)
+            if (affectedLists.Count == 0) return;
+
+            foreach (var listId in affectedLists)
             {
                 _logger.Info(
-                    "[MissingMemberDetectionService] Audio removed — running detection for playlist {0}",
-                    playlistId);
-                MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
-                QueueCandidateDiscovery("__audio__" + playlistId, playlistId);
+                    "[MissingMemberDetectionService] {0} removed (InternalId={1}) — running detection for list {2}",
+                    typeName, removedInternalId, listId);
+                MissingMemberDetector.RunDetection(listId, _libraryManager, _logger);
+                QueueCandidateDiscovery("__direct__" + listId, listId);
             }
         }
 
@@ -124,7 +143,7 @@ namespace ListProtection.EntryPoints
 
             var normalised = removedFolderPath.TrimEnd('\\', '/');
             var groundTruth = plugin.GroundTruthStore.Load();
-            var affectedPlaylists = new List<string>();
+            var affectedLists = new List<string>();
 
             foreach (var kvp in groundTruth)
             {
@@ -134,13 +153,13 @@ namespace ListProtection.EntryPoints
                         member.Path.StartsWith(normalised + "\\", StringComparison.OrdinalIgnoreCase) ||
                         member.Path.StartsWith(normalised + "/", StringComparison.OrdinalIgnoreCase))
                     {
-                        affectedPlaylists.Add(kvp.Key);
+                        affectedLists.Add(kvp.Key);
                         break;
                     }
                 }
             }
 
-            if (affectedPlaylists.Count == 0)
+            if (affectedLists.Count == 0)
             {
                 _logger.Info(
                     "[MissingMemberDetectionService] Folder removed but no GT members under '{0}' — skipping",
@@ -149,18 +168,17 @@ namespace ListProtection.EntryPoints
             }
 
             _logger.Info(
-                "[MissingMemberDetectionService] Folder removed '{0}' — {1} affected playlist(s)",
-                removedFolderPath, affectedPlaylists.Count);
+                "[MissingMemberDetectionService] Folder removed '{0}' — {1} affected list(s)",
+                removedFolderPath, affectedLists.Count);
 
             var discoveryKey = Path.GetDirectoryName(normalised) ?? normalised;
 
-            foreach (var playlistId in affectedPlaylists)
+            foreach (var listId in affectedLists)
             {
                 _logger.Info(
-                    "[MissingMemberDetectionService] Running detection for playlist {0}",
-                    playlistId);
-                MissingMemberDetector.RunDetection(playlistId, _libraryManager, _logger);
-                QueueCandidateDiscovery(discoveryKey, playlistId);
+                    "[MissingMemberDetectionService] Running detection for list {0}", listId);
+                MissingMemberDetector.RunDetection(listId, _libraryManager, _logger);
+                QueueCandidateDiscovery(discoveryKey, listId);
             }
         }
 
@@ -215,7 +233,7 @@ namespace ListProtection.EntryPoints
                 var itemGrandparent = System.IO.Path.GetDirectoryName(itemParent);
                 if (string.IsNullOrEmpty(itemGrandparent)) return;
 
-                var affectedPlaylists = new List<string>();
+                var affectedLists = new List<string>();
 
                 foreach (var entry in missing)
                 {
@@ -228,27 +246,25 @@ namespace ListProtection.EntryPoints
                     var memberGrandparent = System.IO.Path.GetDirectoryName(memberParent);
                     if (string.IsNullOrEmpty(memberGrandparent)) continue;
 
-                    if (!string.Equals(itemGrandparent, memberGrandparent,
-                            StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(itemGrandparent, memberGrandparent, StringComparison.OrdinalIgnoreCase))
                         continue;
 
-                    if (!affectedPlaylists.Contains(entry.PlaylistId))
-                        affectedPlaylists.Add(entry.PlaylistId);
+                    if (!affectedLists.Contains(entry.PlaylistId))
+                        affectedLists.Add(entry.PlaylistId);
                 }
 
-                if (affectedPlaylists.Count == 0) return;
+                if (affectedLists.Count == 0) return;
 
                 _logger.Info(
-                    "[MissingMemberDetectionService] ItemUpdated '{0}' — grandparent matches missing member path(s) — queuing discovery for {1} playlist(s)",
-                    item.Name ?? "(null)", affectedPlaylists.Count);
+                    "[MissingMemberDetectionService] ItemUpdated '{0}' — grandparent matches missing member path(s) — queuing discovery for {1} list(s)",
+                    item.Name ?? "(null)", affectedLists.Count);
 
-                foreach (var playlistId in affectedPlaylists)
-                    QueueCandidateDiscovery(itemGrandparent, playlistId);
+                foreach (var listId in affectedLists)
+                    QueueCandidateDiscovery(itemGrandparent, listId);
             }
             catch (Exception ex)
             {
-                _logger.ErrorException(
-                    "[MissingMemberDetectionService] OnItemUpdated failed", ex);
+                _logger.ErrorException("[MissingMemberDetectionService] OnItemUpdated failed", ex);
             }
         }
 
@@ -262,7 +278,7 @@ namespace ListProtection.EntryPoints
             var missing = plugin.MissingMembersStore.Load();
             if (missing == null || missing.Count == 0) return;
 
-            var affectedPlaylists = new List<string>();
+            var affectedLists = new List<string>();
 
             foreach (var entry in missing)
             {
@@ -272,30 +288,30 @@ namespace ListProtection.EntryPoints
 
                 if (string.Equals(addedParent, memberParent, StringComparison.OrdinalIgnoreCase))
                 {
-                    if (!affectedPlaylists.Contains(entry.PlaylistId))
-                        affectedPlaylists.Add(entry.PlaylistId);
+                    if (!affectedLists.Contains(entry.PlaylistId))
+                        affectedLists.Add(entry.PlaylistId);
                 }
             }
 
-            if (affectedPlaylists.Count == 0) return;
+            if (affectedLists.Count == 0) return;
 
             _logger.Info(
-                "[MissingMemberDetectionService] Folder added '{0}' — parent matches missing member paths — queuing discovery for {1} playlist(s)",
-                addedFolderPath, affectedPlaylists.Count);
+                "[MissingMemberDetectionService] Folder added '{0}' — parent matches missing member paths — queuing discovery for {1} list(s)",
+                addedFolderPath, affectedLists.Count);
 
-            foreach (var playlistId in affectedPlaylists)
-                QueueCandidateDiscovery(addedParent, playlistId);
+            foreach (var listId in affectedLists)
+                QueueCandidateDiscovery(addedParent, listId);
         }
 
-        private void QueueCandidateDiscovery(string key, string playlistId)
+        private void QueueCandidateDiscovery(string key, string listId)
         {
             lock (_pendingCandidateDiscovery)
             {
                 if (!_pendingCandidateDiscovery.TryGetValue(key, out var list))
                     _pendingCandidateDiscovery[key] = list = new List<string>();
 
-                if (!list.Contains(playlistId))
-                    list.Add(playlistId);
+                if (!list.Contains(listId))
+                    list.Add(listId);
             }
         }
 
@@ -312,7 +328,7 @@ namespace ListProtection.EntryPoints
                 if (typeName != "Folder" && typeName != "MusicAlbum" && typeName != "MusicArtist")
                     return;
 
-                List<string> playlistsToDiscover = null;
+                List<string> listsToDiscover = null;
 
                 lock (_pendingCandidateDiscovery)
                 {
@@ -321,19 +337,19 @@ namespace ListProtection.EntryPoints
                     foreach (var kvp in _pendingCandidateDiscovery)
                     {
                         var key = kvp.Key;
-                        var isAudioKey = key.StartsWith("__audio__", StringComparison.Ordinal);
+                        var isDirectKey = key.StartsWith("__direct__", StringComparison.Ordinal);
 
-                        var isAncestorOrSelf = !isAudioKey &&
+                        var isAncestorOrSelf = !isDirectKey &&
                             key.StartsWith(refreshedPath, StringComparison.OrdinalIgnoreCase);
 
-                        if (isAudioKey || isAncestorOrSelf)
+                        if (isDirectKey || isAncestorOrSelf)
                         {
-                            if (playlistsToDiscover == null)
-                                playlistsToDiscover = new List<string>();
+                            if (listsToDiscover == null)
+                                listsToDiscover = new List<string>();
 
                             foreach (var id in kvp.Value)
-                                if (!playlistsToDiscover.Contains(id))
-                                    playlistsToDiscover.Add(id);
+                                if (!listsToDiscover.Contains(id))
+                                    listsToDiscover.Add(id);
 
                             toRemove.Add(key);
                         }
@@ -343,25 +359,23 @@ namespace ListProtection.EntryPoints
                         _pendingCandidateDiscovery.Remove(key);
                 }
 
-                if (playlistsToDiscover == null) return;
+                if (listsToDiscover == null) return;
 
                 _logger.Info(
-                    "[MissingMemberDetectionService] RefreshCompleted '{0}' — running candidate discovery for {1} playlist(s)",
-                    refreshedItem.Name ?? "(null)", playlistsToDiscover.Count);
+                    "[MissingMemberDetectionService] RefreshCompleted '{0}' — running candidate discovery for {1} list(s)",
+                    refreshedItem.Name ?? "(null)", listsToDiscover.Count);
 
-                foreach (var playlistId in playlistsToDiscover)
+                foreach (var listId in listsToDiscover)
                 {
                     _logger.Info(
-                        "[MissingMemberDetectionService] Running candidate discovery for playlist {0}",
-                        playlistId);
-                    CandidateDiscoverer.RunDiscovery(playlistId, _libraryManager, _logger);
+                        "[MissingMemberDetectionService] Running candidate discovery for list {0}", listId);
+                    CandidateDiscoverer.RunDiscovery(listId, _libraryManager, _logger);
 
                     _logger.Info(
-                        "[MissingMemberDetectionService] Attempting auto-repair for playlist {0}",
-                        playlistId);
+                        "[MissingMemberDetectionService] Attempting auto-repair for list {0}", listId);
 
                     AutoRepairer.RunAutoRepair(
-                        playlistId,
+                        listId,
                         _libraryManager,
                         _playlistManager,
                         _collectionManager,
@@ -371,9 +385,9 @@ namespace ListProtection.EntryPoints
                         {
                             if (t.IsFaulted)
                                 _logger.ErrorException(
-                                    "[MissingMemberDetectionService] AutoRepairer.RunAutoRepair faulted for playlist {0}",
+                                    "[MissingMemberDetectionService] AutoRepairer.RunAutoRepair faulted for list {0}",
                                     t.Exception,
-                                    playlistId);
+                                    listId);
                         });
                 }
             }

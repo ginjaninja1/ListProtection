@@ -22,7 +22,7 @@ namespace ListProtection.UI.PlaylistManagement
 
         public static PlaylistManagementUI Build(PlaylistRow[] rows)
         {
-            var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, true, true)
+            var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, true, false)
             {
                 editing = new DxGridEditing
                 {

@@ -28,8 +28,8 @@ namespace ListProtection.EntryPoints
     ///   Match against store, remove member, save.
     ///
     /// Repair suppression:
-    ///   When PlaylistRepairService is executing an atomic remove→add cycle it
-    ///   registers the playlist InternalId in Plugin.RepairSuppressedPlaylists.
+    ///   When ListRepairService is executing an atomic remove→add cycle it
+    ///   registers the playlist InternalId in Plugin.RepairSuppressedLists.
     ///   Both OnPlaylistItemsAdded and OnPlaylistItemsRemoved skip suppressed
     ///   playlists entirely — repair owns the GT update for that window.
     ///   A warning is logged if a suppressed event is dropped, so the edge case
@@ -90,7 +90,7 @@ namespace ListProtection.EntryPoints
             // Repair owns the GT update for this add cycle — skip maintenance queuing.
             // Warning logged so simultaneous user actions during repair are visible.
             var plugin = ListProtectionPlugin.Instance;
-            if (plugin != null && plugin.RepairSuppressedPlaylists.ContainsKey(playlist.InternalId))
+            if (plugin != null && plugin.RepairSuppressedLists.ContainsKey(playlist.InternalId))
             {
                 _logger.Warn(
                     "[PlaylistMaintenanceService] PlaylistItemsAdded — repair in progress for '{0}' ({1}) — skipping readback queue (repair owns GT update)",
@@ -254,7 +254,7 @@ namespace ListProtection.EntryPoints
             // Repair owns the GT update for this remove cycle — skip maintenance GT remove.
             // Warning logged so simultaneous user actions during repair are visible.
             var plugin = ListProtectionPlugin.Instance;
-            if (plugin != null && plugin.RepairSuppressedPlaylists.ContainsKey(playlist.InternalId))
+            if (plugin != null && plugin.RepairSuppressedLists.ContainsKey(playlist.InternalId))
             {
                 _logger.Warn(
                     "[PlaylistMaintenanceService] PlaylistItemsRemoved — repair in progress for '{0}' ({1}) — skipping GT remove (repair owns GT update)",

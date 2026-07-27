@@ -31,7 +31,7 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ICollectionManager _collectionManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
-        private readonly PlaylistRepairService _repairService;
+        private readonly ListRepairService _repairService;
 
         public PlaylistManagementPageView(
             PluginInfo pluginInfo,
@@ -41,7 +41,7 @@ namespace ListProtection.UI.PlaylistManagement
             ICollectionManager collectionManager,
             IJsonSerializer jsonSerializer,
             ILogger logger,
-            PlaylistRepairService repairService)
+            ListRepairService repairService)
             : base(pluginInfo.Id)
         {
             _pluginInfo = pluginInfo;

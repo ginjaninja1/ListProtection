@@ -33,7 +33,7 @@ namespace ListProtection.UI.RepairDialog
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly PlaylistManagementStore _playlistStore;
-        private readonly PlaylistRepairService _repairService;
+        private readonly ListRepairService _repairService;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
 
@@ -48,7 +48,7 @@ namespace ListProtection.UI.RepairDialog
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
             PlaylistManagementStore playlistStore,
-            PlaylistRepairService repairService,
+            ListRepairService repairService,
             IJsonSerializer jsonSerializer,
             ILogger logger)
             : base(pluginInfo.Id)

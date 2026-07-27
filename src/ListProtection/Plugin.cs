@@ -35,7 +35,7 @@ namespace ListProtection
 
         public SemaphoreSlim WriterLock { get; } = new SemaphoreSlim(1, 1);
 
-        public readonly ConcurrentDictionary<long, byte> RepairSuppressedPlaylists
+        public readonly ConcurrentDictionary<long, byte> RepairSuppressedLists
             = new ConcurrentDictionary<long, byte>();
 
         public PlaylistManagementStore PlaylistStore { get; }

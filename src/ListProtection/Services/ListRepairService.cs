@@ -27,7 +27,7 @@ namespace ListProtection.Services
     ///
     /// Branch determined by GroundTruthEntry.IsCollection.
     /// </summary>
-    public class PlaylistRepairService
+    public class ListRepairService
     {
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
@@ -45,7 +45,7 @@ namespace ListProtection.Services
             public bool GroundTruthChanged;
         }
 
-        public PlaylistRepairService(
+        public ListRepairService(
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
             PlaylistManagementStore playlistStore,
@@ -68,7 +68,7 @@ namespace ListProtection.Services
         public async Task ExecuteRepairs(MissingMemberRow[] rows)
         {
             var user = _userManager.GetUserList(new UserQuery())[0];
-            _logger.Info("[PlaylistRepairService] ExecuteRepairs — user={0}", user.Name);
+            _logger.Info("[ListRepairService] ExecuteRepairs — user={0}", user.Name);
 
             var plugin = ListProtectionPlugin.Instance;
 
@@ -104,7 +104,7 @@ namespace ListProtection.Services
                     var parts = candidateRow.Key.Split('_');
                     if (parts.Length < 3)
                     {
-                        _logger.Warn("[PlaylistRepairService] Unexpected candidate Key format: {0}", candidateRow.Key);
+                        _logger.Warn("[ListRepairService] Unexpected candidate Key format: {0}", candidateRow.Key);
                         continue;
                     }
 
@@ -112,7 +112,7 @@ namespace ListProtection.Services
                     if (!long.TryParse(parts[1], out var missingInternalId) ||
                         !long.TryParse(parts[2], out var candidateInternalId))
                     {
-                        _logger.Warn("[PlaylistRepairService] Could not parse candidate Key: {0}", candidateRow.Key);
+                        _logger.Warn("[ListRepairService] Could not parse candidate Key: {0}", candidateRow.Key);
                         continue;
                     }
 
@@ -123,7 +123,7 @@ namespace ListProtection.Services
 
                     if (!exists)
                     {
-                        _logger.Warn("[PlaylistRepairService] CandidateEntry not found in store, skipping Key: {0}", candidateRow.Key);
+                        _logger.Warn("[ListRepairService] CandidateEntry not found in store, skipping Key: {0}", candidateRow.Key);
                         continue;
                     }
 
@@ -136,11 +136,11 @@ namespace ListProtection.Services
 
             if (repairsByList.Count == 0)
             {
-                _logger.Info("[PlaylistRepairService] No repair candidates selected");
+                _logger.Info("[ListRepairService] No repair candidates selected");
                 return;
             }
 
-            _logger.Info("[PlaylistRepairService] {0} list(s) to repair", repairsByList.Count);
+            _logger.Info("[ListRepairService] {0} list(s) to repair", repairsByList.Count);
 
             var missingChanged = false;
             var candidatesChanged = false;
@@ -157,12 +157,12 @@ namespace ListProtection.Services
                 var isCollection = oldGtEntry?.IsCollection ?? false;
 
                 _logger.Info(
-                    "[PlaylistRepairService] List='{0}' | Type={1} | repairing {2} member(s) | oldId={3}",
+                    "[ListRepairService] List='{0}' | Type={1} | repairing {2} member(s) | oldId={3}",
                     listName, isCollection ? "Collection" : "Playlist", repairs.Count, oldListId);
 
                 if (!Guid.TryParseExact(oldListId, "N", out var oldGuid))
                 {
-                    _logger.Warn("[PlaylistRepairService] Could not parse oldListId as Guid: {0}", oldListId);
+                    _logger.Warn("[ListRepairService] Could not parse oldListId as Guid: {0}", oldListId);
                     continue;
                 }
 
@@ -187,17 +187,17 @@ namespace ListProtection.Services
                 if (groundTruthChanged)
                 {
                     _groundTruthStore.Save(groundTruth);
-                    _logger.Info("[PlaylistRepairService] GroundTruthStore saved");
+                    _logger.Info("[ListRepairService] GroundTruthStore saved");
                 }
                 if (missingChanged)
                 {
                     _missingMembersStore.Save(missingRecords);
-                    _logger.Info("[PlaylistRepairService] MissingMembersStore saved");
+                    _logger.Info("[ListRepairService] MissingMembersStore saved");
                 }
                 if (candidatesChanged)
                 {
                     plugin.CandidateStore.Save(candidateRecords);
-                    _logger.Info("[PlaylistRepairService] CandidateStore saved");
+                    _logger.Info("[ListRepairService] CandidateStore saved");
                 }
             }
             finally
@@ -205,7 +205,7 @@ namespace ListProtection.Services
                 plugin.WriterLock.Release();
             }
 
-            _logger.Info("[PlaylistRepairService] ExecuteRepairs complete");
+            _logger.Info("[ListRepairService] ExecuteRepairs complete");
         }
 
         // ── Collection repair ──────────────────────────────────────────────
@@ -243,26 +243,26 @@ namespace ListProtection.Services
                     missingToCandidate[missingId] = candidateId;
 
                 var removeIds = repairs.Select(r => r.missingInternalId).ToArray();
-                _logger.Info("[PlaylistRepairService] Collection: removing {0} member(s) from '{1}'", removeIds.Length, listName);
+                _logger.Info("[ListRepairService] Collection: removing {0} member(s) from '{1}'", removeIds.Length, listName);
                 try
                 {
                     _collectionManager.RemoveFromCollection(existingCollection, removeIds);
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistRepairService] RemoveFromCollection failed for '{0}'", ex, listName);
+                    _logger.ErrorException("[ListRepairService] RemoveFromCollection failed for '{0}'", ex, listName);
                     return result;
                 }
 
                 var addIds = repairs.Select(r => r.candidateInternalId).ToArray();
-                _logger.Info("[PlaylistRepairService] Collection: adding {0} candidate(s) to '{1}'", addIds.Length, listName);
+                _logger.Info("[ListRepairService] Collection: adding {0} candidate(s) to '{1}'", addIds.Length, listName);
                 try
                 {
                     await _collectionManager.AddToCollection(existingCollection.InternalId, addIds);
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistRepairService] AddToCollection failed for '{0}'", ex, listName);
+                    _logger.ErrorException("[ListRepairService] AddToCollection failed for '{0}'", ex, listName);
                     return result;
                 }
 
@@ -298,7 +298,7 @@ namespace ListProtection.Services
             else
             {
                 // Collection gone — recreate
-                _logger.Info("[PlaylistRepairService] Collection GuidN={0} not found — calling CreateCollection", oldListId);
+                _logger.Info("[ListRepairService] Collection GuidN={0} not found — calling CreateCollection", oldListId);
 
                 var missingToCandidate = new Dictionary<long, long>();
                 foreach (var (missingId, candidateId) in repairs)
@@ -322,20 +322,20 @@ namespace ListProtection.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistRepairService] CreateCollection failed for '{0}'", ex, listName);
+                    _logger.ErrorException("[ListRepairService] CreateCollection failed for '{0}'", ex, listName);
                     return result;
                 }
 
                 if (newCollection == null)
                 {
-                    _logger.Error("[PlaylistRepairService] CreateCollection returned null for '{0}'", listName);
+                    _logger.Error("[ListRepairService] CreateCollection returned null for '{0}'", listName);
                     return result;
                 }
 
                 var newGuidN = newCollection.Id.ToString("N");
                 activeListId = newGuidN;
 
-                _logger.Info("[PlaylistRepairService] New collection | GuidN={0} | InternalId={1}", newGuidN, newCollection.InternalId);
+                _logger.Info("[ListRepairService] New collection | GuidN={0} | InternalId={1}", newGuidN, newCollection.InternalId);
 
                 protectedIds.Remove(oldListId);
                 protectedIds.Add(newGuidN);
@@ -366,7 +366,7 @@ namespace ListProtection.Services
             result.MissingChanged |= removeResult.missingChanged;
             result.CandidatesChanged |= removeResult.candidatesChanged;
 
-            _logger.Info("[PlaylistRepairService] Collection repair complete | '{0}' | activeId={1}", listName, activeListId);
+            _logger.Info("[ListRepairService] Collection repair complete | '{0}' | activeId={1}", listName, activeListId);
             return result;
         }
 
@@ -412,7 +412,7 @@ namespace ListProtection.Services
                 var currentMembers = activePlaylist.GetItemList(new InternalItemsQuery());
                 var currentEntryIds = currentMembers.Select(m => m.ListItemEntryId).ToArray();
 
-                plugin.RepairSuppressedPlaylists.TryAdd(activeInternalId, 0);
+                plugin.RepairSuppressedLists.TryAdd(activeInternalId, 0);
                 try
                 {
                     if (currentEntryIds.Length > 0)
@@ -420,11 +420,11 @@ namespace ListProtection.Services
                         try
                         {
                             await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
-                            _logger.Info("[PlaylistRepairService] RemoveFromPlaylist succeeded");
+                            _logger.Info("[ListRepairService] RemoveFromPlaylist succeeded");
                         }
                         catch (Exception ex)
                         {
-                            _logger.ErrorException("[PlaylistRepairService] RemoveFromPlaylist failed for '{0}'", ex, listName);
+                            _logger.ErrorException("[ListRepairService] RemoveFromPlaylist failed for '{0}'", ex, listName);
                             return result;
                         }
                     }
@@ -449,17 +449,17 @@ namespace ListProtection.Services
                             skipDuplicates: false,
                             user: user,
                             cancellationToken: CancellationToken.None);
-                        _logger.Info("[PlaylistRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
+                        _logger.Info("[ListRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
                     }
                     catch (Exception ex)
                     {
-                        _logger.ErrorException("[PlaylistRepairService] AddToPlaylist failed for '{0}'", ex, listName);
+                        _logger.ErrorException("[ListRepairService] AddToPlaylist failed for '{0}'", ex, listName);
                         return result;
                     }
                 }
                 finally
                 {
-                    plugin.RepairSuppressedPlaylists.TryRemove(activeInternalId, out _);
+                    plugin.RepairSuppressedLists.TryRemove(activeInternalId, out _);
                 }
 
                 // Update GT
@@ -492,12 +492,12 @@ namespace ListProtection.Services
                 };
                 result.GroundTruthChanged = true;
 
-                _logger.Info("[PlaylistRepairService] Ground truth updated | GuidN={0} | members={1}", activeListId, updatedMembers.Count);
+                _logger.Info("[ListRepairService] Ground truth updated | GuidN={0} | members={1}", activeListId, updatedMembers.Count);
             }
             else
             {
                 // Playlist gone — recreate
-                _logger.Info("[PlaylistRepairService] Playlist GuidN={0} not found — calling CreatePlaylist", oldListId);
+                _logger.Info("[ListRepairService] Playlist GuidN={0} not found — calling CreatePlaylist", oldListId);
 
                 var missingToCandidate = new Dictionary<long, long>();
                 foreach (var (missingId, candidateId) in repairs)
@@ -519,19 +519,19 @@ namespace ListProtection.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistRepairService] CreatePlaylist failed for '{0}'", ex, listName);
+                    _logger.ErrorException("[ListRepairService] CreatePlaylist failed for '{0}'", ex, listName);
                     return result;
                 }
 
                 if (createResult == null || string.IsNullOrEmpty(createResult.Id))
                 {
-                    _logger.Error("[PlaylistRepairService] Null result for '{0}'", listName);
+                    _logger.Error("[ListRepairService] Null result for '{0}'", listName);
                     return result;
                 }
 
                 if (!long.TryParse(createResult.Id, out var newInternalId))
                 {
-                    _logger.Error("[PlaylistRepairService] Could not parse result.Id: {0}", createResult.Id);
+                    _logger.Error("[ListRepairService] Could not parse result.Id: {0}", createResult.Id);
                     return result;
                 }
 
@@ -543,14 +543,14 @@ namespace ListProtection.Services
 
                 if (resolvedItems.Length == 0)
                 {
-                    _logger.Error("[PlaylistRepairService] Could not resolve Guid for InternalId={0}", newInternalId);
+                    _logger.Error("[ListRepairService] Could not resolve Guid for InternalId={0}", newInternalId);
                     return result;
                 }
 
                 var newGuidN = resolvedItems[0].Id.ToString("N");
                 activeListId = newGuidN;
 
-                _logger.Info("[PlaylistRepairService] New playlist | GuidN={0} | InternalId={1}", newGuidN, newInternalId);
+                _logger.Info("[ListRepairService] New playlist | GuidN={0} | InternalId={1}", newGuidN, newInternalId);
 
                 protectedIds.Remove(oldListId);
                 protectedIds.Add(newGuidN);
@@ -589,7 +589,7 @@ namespace ListProtection.Services
                     groundTruth.Remove(oldListId);
                 result.GroundTruthChanged = true;
 
-                _logger.Info("[PlaylistRepairService] GroundTruthStore entry written | GuidN={0} | members={1}", newGuidN, newMembers.Count);
+                _logger.Info("[ListRepairService] GroundTruthStore entry written | GuidN={0} | members={1}", newGuidN, newMembers.Count);
             }
 
             WriteRepairEvent(activeListId, listName, repairs, repairedMissingIds, missingRecords, candidateRecords, oldGtEntry);
@@ -598,7 +598,7 @@ namespace ListProtection.Services
             result.MissingChanged |= removeResult.missingChanged;
             result.CandidatesChanged |= removeResult.candidatesChanged;
 
-            _logger.Info("[PlaylistRepairService] Playlist repair complete | '{0}' | activeId={1}", listName, activeListId);
+            _logger.Info("[ListRepairService] Playlist repair complete | '{0}' | activeId={1}", listName, activeListId);
             return result;
         }
 
@@ -722,7 +722,7 @@ namespace ListProtection.Services
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistRepairService] Failed to write Repair event", ex);
+                _logger.ErrorException("[ListRepairService] Failed to write Repair event", ex);
             }
         }
 

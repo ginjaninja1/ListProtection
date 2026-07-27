@@ -14,8 +14,8 @@ namespace ListProtection.Services
     ///
     /// Three capture sites exist in the codebase:
     ///   PlaylistManagementPageView.CaptureMembers   — initial protect
-    ///   PlaylistRepairService (rebuild path)         — after atomic remove/re-add
-    ///   PlaylistRepairService (create-playlist path) — after CreatePlaylist
+    ///   ListRepairService (rebuild path)         — after atomic remove/re-add
+    ///   ListRepairService (create-playlist path) — after CreatePlaylist
     ///
     /// Media-type-specific fields are populated only for known types. Unknown types
     /// receive base fields only — evidence collectors handle null fields gracefully.

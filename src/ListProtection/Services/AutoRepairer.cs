@@ -77,7 +77,7 @@ namespace ListProtection.Services
 
                 var itemLookup = BuildCandidateItemLookup(candidates, libraryManager, logger);
 
-                var repairService = new PlaylistRepairService(
+                var repairService = new ListRepairService(
                     plugin.MissingMembersStore,
                     plugin.GroundTruthStore,
                     plugin.PlaylistStore,

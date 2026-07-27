@@ -23,7 +23,7 @@ namespace ListProtection.UI.MissingMembers
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
-        private readonly PlaylistRepairService _repairService;
+        private readonly ListRepairService _repairService;
 
         public MissingMembersPageView(
             PluginInfo pluginInfo,
@@ -33,7 +33,7 @@ namespace ListProtection.UI.MissingMembers
             IJsonSerializer jsonSerializer,
             ILogger logger,
             ILibraryManager libraryManager,
-            PlaylistRepairService repairService)
+            ListRepairService repairService)
             : base(pluginInfo.Id)
         {
             _missingMembersStore = missingMembersStore;

@@ -30,7 +30,7 @@ namespace ListProtection.UI
         private readonly IUserManager _userManager;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
-        private readonly PlaylistRepairService _repairService;
+        private readonly ListRepairService _repairService;
         private readonly List<IPluginUIPageController> _tabPages = new List<IPluginUIPageController>();
 
         public MainController(
@@ -57,7 +57,7 @@ namespace ListProtection.UI
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
             _logger = logManager.GetLogger(nameof(MainController));
 
-            _repairService = new PlaylistRepairService(
+            _repairService = new ListRepairService(
                 _missingMembersStore,
                 _groundTruthStore,
                 _playlistStore,

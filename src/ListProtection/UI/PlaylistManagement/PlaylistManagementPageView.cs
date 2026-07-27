@@ -205,6 +205,27 @@ namespace ListProtection.UI.PlaylistManagement
 
                 _store.Save(incomingProtectedIds);
 
+                if (beingUnprotected.Length > 0)
+                {
+                    var gtBeforeRemoval = _groundTruthStore.Load();
+                    foreach (var oldId in beingUnprotected)
+                    {
+                        var nameForEvent = gtBeforeRemoval.TryGetValue(oldId, out var oldGt)
+                            ? oldGt.PlaylistName
+                            : (ui.PlaylistRows.FirstOrDefault(r => r.Id == oldId)?.Name ?? "(unnamed)");
+                        WriteEvent("Unprotect", oldId, nameForEvent ?? "(unnamed)", string.Empty);
+                    }
+
+                    var entriesAfterRemoval = _groundTruthStore.Load();
+                    var anyRemoved = false;
+                    foreach (var oldId in beingUnprotected)
+                        anyRemoved |= entriesAfterRemoval.Remove(oldId);
+                    if (anyRemoved)
+                        _groundTruthStore.Save(entriesAfterRemoval);
+
+                    PurgeStaleDetectionData(beingUnprotected);
+                }
+
                 if (beingProtected.Length > 0)
                     PurgeStaleDetectionData(beingProtected);
 
@@ -360,12 +381,14 @@ namespace ListProtection.UI.PlaylistManagement
                     .Where(r => string.Equals(r.PlaylistId, idString, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 missingCount = playlistMissing.Count;
+                var threshold = ListProtectionPlugin.Instance.Configuration.ManualRepairScoreThreshold;
                 foreach (var mr in playlistMissing)
                 {
                     var hasCandidate = allCandidates.Any(c =>
                         string.Equals(c.PlaylistId, idString, StringComparison.OrdinalIgnoreCase) &&
                         mr.Member != null &&
-                        c.MissingMember?.InternalId == mr.Member.InternalId);
+                        c.MissingMember?.InternalId == mr.Member.InternalId &&
+                        c.Score >= threshold);
                     if (hasCandidate) candidateCoveredCount++;
                 }
             }

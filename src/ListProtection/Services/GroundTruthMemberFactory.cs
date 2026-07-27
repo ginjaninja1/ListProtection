@@ -42,6 +42,8 @@ namespace ListProtection.Services
                 PopulateEpisode(member, episode);
             else if (item is Movie movie)
                 PopulateMovie(member, movie);
+            else if (item is Series series)
+                PopulateSeriesDirect(member, series);
 
             return member;
         }
@@ -104,6 +106,17 @@ namespace ListProtection.Services
             // ProductionYear already captured in base (item.ProductionYear above)
             member.ImdbId = GetProviderId(movie, MetadataProviders.Imdb);
             member.TmdbId = GetProviderId(movie, MetadataProviders.Tmdb);
+        }
+
+        // ── Series (whole series as a direct collection member) ────────────
+        // Reuses SeriesTvdbId/SeriesImdbId — same fields Episode uses for its
+        // parent series, since the value means the same thing either way.
+
+        private static void PopulateSeriesDirect(GroundTruthMember member, Series series)
+        {
+            member.SeriesName = series.Name;
+            member.SeriesTvdbId = GetProviderId(series, MetadataProviders.Tvdb);
+            member.SeriesImdbId = GetProviderId(series, MetadataProviders.Imdb);
         }
 
         // ── Helpers ────────────────────────────────────────────────────────

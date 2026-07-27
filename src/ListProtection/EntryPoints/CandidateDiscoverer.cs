@@ -32,6 +32,8 @@ namespace ListProtection.EntryPoints
         private static readonly IEvidenceCollector _audioCollector = new AudioEvidenceCollector();
         private static readonly IEvidenceCollector _episodeCollector = new EpisodeEvidenceCollector();
         private static readonly IEvidenceCollector _movieCollector = new MovieEvidenceCollector();
+        private static readonly IEvidenceCollector _seriesCollector = new SeriesEvidenceCollector();
+        private static readonly IEvidenceCollector _musicAlbumCollector = new MusicAlbumEvidenceCollector();
         private static readonly FolderEvidenceCollector _folderCollector = new FolderEvidenceCollector();
         private static readonly FallbackEvidenceCollector _fallbackCollector = new FallbackEvidenceCollector();
 
@@ -248,6 +250,8 @@ namespace ListProtection.EntryPoints
                 case "Audio": embyType = "Audio"; break;
                 case "Episode": embyType = "Episode"; break;
                 case "Movie": embyType = "Movie"; break;
+                case "Series": embyType = "Series"; break;
+                case "MusicAlbum": embyType = "MusicAlbum"; break;
                 default:
                     logger.Warn(
                         "[CandidateDiscoverer] Unsupported MediaType '{0}' — no pool built",
@@ -275,6 +279,8 @@ namespace ListProtection.EntryPoints
                 case "Audio": return _audioCollector;
                 case "Episode": return _episodeCollector;
                 case "Movie": return _movieCollector;
+                case "Series": return _seriesCollector;
+                case "MusicAlbum": return _musicAlbumCollector;
                 default: return null;
             }
         }

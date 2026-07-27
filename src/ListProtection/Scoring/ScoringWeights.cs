@@ -81,6 +81,24 @@ namespace ListProtection.Scoring
             new ScoringRule(40,  MovieFacts.DurationMatch),
         };
 
+        // ── Series content rules (whole series as a direct collection member) ─
+
+        public static readonly List<ScoringRule> SeriesRules = new List<ScoringRule>
+        {
+            new ScoringRule(200, SeriesFacts.TvdbIdMatch),
+            new ScoringRule(200, SeriesFacts.ImdbIdMatch),
+            new ScoringRule(70,  SeriesFacts.TitleMatch),
+        };
+
+        // ── MusicAlbum content rules (whole album as a direct collection member) ─
+        // Conservative — see MusicAlbumEvidenceCollector for why no ID short-circuit exists yet.
+
+        public static readonly List<ScoringRule> MusicAlbumRules = new List<ScoringRule>
+        {
+            new ScoringRule(90, MusicAlbumFacts.TitleMatch, MusicAlbumFacts.YearMatch),
+            new ScoringRule(50, MusicAlbumFacts.TitleMatch),
+        };
+
         // ── Fallback content rules (Tier 3 — no media-type collector fired) ─
 
         public static readonly List<ScoringRule> FallbackRules = new List<ScoringRule>
@@ -106,6 +124,8 @@ namespace ListProtection.Scoring
                 case "Audio": return AudioRules;
                 case "Episode": return EpisodeRules;
                 case "Movie": return MovieRules;
+                case "Series": return SeriesRules;
+                case "MusicAlbum": return MusicAlbumRules;
                 default: return FallbackRules;
             }
         }

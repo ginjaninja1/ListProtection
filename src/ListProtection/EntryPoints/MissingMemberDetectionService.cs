@@ -27,15 +27,22 @@ namespace ListProtection.EntryPoints
 
         // Item types that are direct GT members and detected by InternalId lookup.
         // Folder-like types are handled separately by path-prefix scan.
+        //
+        // MusicAlbum moved here from _folderTypes: when a MusicAlbum is itself a
+        // direct collection member (whole album added to a Collection), its own
+        // item.Path is frequently empty (confirmed via diagnostic dump — it's an
+        // aggregate entity, not reliably backed by a single folder path), so the
+        // path-prefix scan in HandleFolderRemoved could never match it. InternalId
+        // lookup is the only reliable signal for this case.
         private static readonly HashSet<string> _directMemberTypes = new HashSet<string>(StringComparer.Ordinal)
         {
-            "Audio", "Movie", "Episode", "Series", "BoxSet"
+            "Audio", "Movie", "Episode", "Series", "BoxSet", "MusicAlbum"
         };
 
         // Item types that represent containers — detected by scanning GT member paths.
         private static readonly HashSet<string> _folderTypes = new HashSet<string>(StringComparer.Ordinal)
         {
-            "Folder", "MusicAlbum", "MusicArtist"
+            "Folder", "MusicArtist"
         };
 
         public MissingMemberDetectionService(

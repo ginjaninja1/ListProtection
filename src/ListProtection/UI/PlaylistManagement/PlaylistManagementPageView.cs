@@ -252,13 +252,35 @@ namespace ListProtection.UI.PlaylistManagement
             {
                 var protectedIds = _store.Load();
                 var rows = BuildRows(protectedIds);
-                return PlaylistManagementUI.Build(rows);
+                return PlaylistManagementUI.Build(rows, BuildConvergenceStatusText());
             }
             catch (Exception ex)
             {
                 _logger.ErrorException("[PlaylistManagementPageView] BuildOptions failed", ex);
                 return PlaylistManagementUI.Build(Array.Empty<PlaylistRow>());
             }
+        }
+
+        private string BuildConvergenceStatusText()
+        {
+            var status = ListProtectionPlugin.Instance.ConsistencyStatusStore.Load();
+            if (status == null)
+                return "⚠️ Consistency check has not run yet — data below may not reflect current library state.";
+
+            var age = DateTime.UtcNow - status.CompletedAtUtc;
+            var sourceText = status.Trigger == ConsistencyCheckTrigger.PostScan
+                ? "after a library scan"
+                : "on schedule/manual run";
+
+            var ageText = age.TotalMinutes < 1
+                ? "just now"
+                : age.TotalHours < 1
+                    ? $"{(int)age.TotalMinutes} min ago"
+                    : age.TotalHours < 48
+                        ? $"{(int)age.TotalHours}h ago"
+                        : $"{(int)age.TotalDays}d ago";
+
+            return $"✅ Last converged {ageText} ({sourceText}). Run a library scan for the most current view.";
         }
 
         private PlaylistRow[] BuildRows(HashSet<string> protectedIds)

@@ -43,6 +43,7 @@ namespace ListProtection
         public MissingMembersStore MissingMembersStore { get; }
         public CandidateStore CandidateStore { get; }
         public EventStore EventStore { get; }
+        public ConsistencyCheckStatusStore ConsistencyStatusStore { get; }
 
         public ListProtectionPlugin(
             IApplicationPaths applicationPaths,
@@ -67,6 +68,7 @@ namespace ListProtection
             MissingMembersStore = new MissingMembersStore(applicationHost, _logger, this.Name + ".MissingMembers");
             CandidateStore = new CandidateStore(applicationHost, _logger, this.Name + ".Candidates");
             EventStore = new EventStore(applicationHost, _logger, this.Name + ".Events");
+            ConsistencyStatusStore = new ConsistencyCheckStatusStore(applicationHost, _logger, this.Name + ".ConsistencyStatus");
 
             Instance = this;
         }

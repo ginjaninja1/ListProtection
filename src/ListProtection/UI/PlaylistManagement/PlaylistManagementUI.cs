@@ -14,13 +14,15 @@ namespace ListProtection.UI.PlaylistManagement
 
         public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");
 
+        public LabelItem ConvergenceStatus { get; set; } = new LabelItem(string.Empty);
+
         [GridDataSource(nameof(PlaylistRows))]
         public DxDataGrid PlaylistGrid { get; set; }
 
         [Browsable(false)]
         public PlaylistRow[] PlaylistRows { get; set; } = Array.Empty<PlaylistRow>();
 
-        public static PlaylistManagementUI Build(PlaylistRow[] rows)
+        public static PlaylistManagementUI Build(PlaylistRow[] rows, string convergenceStatusText = "")
         {
             var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, true, false)
             {
@@ -114,7 +116,8 @@ namespace ListProtection.UI.PlaylistManagement
             return new PlaylistManagementUI
             {
                 PlaylistGrid = new DxDataGrid(options),
-                PlaylistRows = rows
+                PlaylistRows = rows,
+                ConvergenceStatus = new LabelItem(convergenceStatusText)
             };
         }
     }

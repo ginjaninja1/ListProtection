@@ -1,5 +1,6 @@
 ﻿using ListProtection.EntryPoints;
 using ListProtection.Services;
+using ListProtection.Storage;
 using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
@@ -42,13 +43,13 @@ namespace ListProtection.Tasks
         public Task Run(IProgress<double> progress, CancellationToken cancellationToken)
         {
             _logger.Info("[ConsistencyCheckTask] Post-scan trigger");
-            return RunPipeline(progress, cancellationToken);
+            return RunPipeline(progress, cancellationToken, ConsistencyCheckTrigger.PostScan);
         }
 
         public Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
             _logger.Info("[ConsistencyCheckTask] Scheduled/manual trigger");
-            return RunPipeline(progress, cancellationToken);
+            return RunPipeline(progress, cancellationToken, ConsistencyCheckTrigger.ScheduledOrManual);
         }
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
@@ -63,7 +64,7 @@ namespace ListProtection.Tasks
             };
         }
 
-        private async Task RunPipeline(IProgress<double> progress, CancellationToken cancellationToken)
+        private async Task RunPipeline(IProgress<double> progress, CancellationToken cancellationToken, ConsistencyCheckTrigger trigger)
         {
             try
             {
@@ -89,6 +90,8 @@ namespace ListProtection.Tasks
                     _collectionManager,
                     _userManager,
                     _logger);
+
+                ListProtectionPlugin.Instance.ConsistencyStatusStore.Save(DateTime.UtcNow, trigger);
 
                 progress?.Report(100);
                 _logger.Info("[ConsistencyCheckTask] Complete");

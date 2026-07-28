@@ -12,7 +12,7 @@ namespace ListProtection.UI.PlaylistManagement
         public override string EditorTitle => "Managed Lists";
         public override string EditorDescription => "Toggle protection on a playlist or collection to track its membership.";
 
-        public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Candidates");
+        public CaptionItem StatusLegend { get; set; } = new CaptionItem("ℹ️ Status: Members / Missing / With Good Candidates");
 
         public LabelItem ConvergenceStatus { get; set; } = new LabelItem(string.Empty);
 

@@ -1,4 +1,5 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Services;
+using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
@@ -56,7 +57,9 @@ namespace ListProtection.EntryPoints
                 }
 
                 var changed = false;
+                var groundTruthChanged = false;
                 var newlyAdded = new List<MissingMemberEntry>();
+                var newlyAddedMembers = new List<(string ListId, string ListName, GroundTruthMember Member)>();
 
                 // Resolve all playlists and collections once
                 var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery
@@ -117,6 +120,37 @@ namespace ListProtection.EntryPoints
                         foreach (var m in liveMembers)
                             liveIds.Add(m.InternalId);
 
+                    // Reconcile additions — collections only. Collections are proven
+                    // unordered sets (no ListItemOrder equivalent), so "live member not
+                    // yet in GT → add it" is safe. Playlists are NOT handled here: a scan
+                    // can't safely infer where in playlist order a new item belongs, so
+                    // that stays the responsibility of PlaylistMaintenanceService's
+                    // real-time events. This closes the gap where a scan alone — with no
+                    // real-time listener deployed or enabled — would otherwise never learn
+                    // about items added directly to a protected collection.
+                    if (entry.IsCollection && liveMembers != null)
+                    {
+                        var gtKnownIds = new HashSet<long>();
+                        foreach (var existingMember in entry.Members)
+                            gtKnownIds.Add(existingMember.InternalId);
+
+                        foreach (var liveItem in liveMembers)
+                        {
+                            if (gtKnownIds.Contains(liveItem.InternalId)) continue;
+
+                            var newMember = GroundTruthMemberFactory.FromItem(liveItem);
+                            entry.Members.Add(newMember);
+                            gtKnownIds.Add(liveItem.InternalId);
+
+                            logger.Info(
+                                "[MissingMemberDetector] New live member found in collection '{0}' not yet in ground truth — added: '{1}' | InternalId={2}",
+                                entry.PlaylistName, newMember.Name, newMember.InternalId);
+
+                            newlyAddedMembers.Add((listIdN, entry.PlaylistName, newMember));
+                            groundTruthChanged = true;
+                        }
+                    }
+
                     for (var pos = 0; pos < entry.Members.Count; pos++)
                     {
                         var member = entry.Members[pos];
@@ -149,6 +183,44 @@ namespace ListProtection.EntryPoints
                         missing.Add(newEntry);
                         newlyAdded.Add(newEntry);
                         changed = true;
+                    }
+                }
+
+                if (groundTruthChanged)
+                {
+                    plugin.WriterLock.Wait();
+                    try { plugin.GroundTruthStore.Save(groundTruth); }
+                    finally { plugin.WriterLock.Release(); }
+
+                    try
+                    {
+                        var byList = new Dictionary<string, List<(string ListName, GroundTruthMember Member)>>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var added in newlyAddedMembers)
+                        {
+                            if (!byList.TryGetValue(added.ListId, out var list))
+                                byList[added.ListId] = list = new List<(string, GroundTruthMember)>();
+                            list.Add((added.ListName, added.Member));
+                        }
+
+                        foreach (var listKvp in byList)
+                        {
+                            var payloadLines = new List<string>();
+                            foreach (var (_, member) in listKvp.Value)
+                                payloadLines.Add((member.Name ?? "(unnamed)") + " | " + (member.Path ?? string.Empty));
+
+                            plugin.EventStore.Append(new EventEntry
+                            {
+                                EventType = "GroundTruthUpdated",
+                                PlaylistId = listKvp.Key,
+                                PlaylistName = listKvp.Value[0].ListName ?? string.Empty,
+                                OccurredAt = DateTime.UtcNow,
+                                Payload = "Reconciled " + listKvp.Value.Count + " new member(s) found live but not yet in ground truth:\n" + string.Join("\n", payloadLines)
+                            });
+                        }
+                    }
+                    catch (Exception evEx)
+                    {
+                        logger.ErrorException("[MissingMemberDetector] Failed to write GroundTruthUpdated event", evEx);
                     }
                 }
 
@@ -194,7 +266,8 @@ namespace ListProtection.EntryPoints
                         logger.ErrorException("[MissingMemberDetector] Failed to write MissingDetected event", evEx);
                     }
                 }
-                else
+
+                if (!changed && !groundTruthChanged)
                 {
                     logger.Info("[MissingMemberDetector] Detection complete — no new missing members found");
                 }

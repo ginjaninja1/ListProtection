@@ -1,6 +1,7 @@
 ﻿using ListProtection.EntryPoints;
 using ListProtection.Services;
 using ListProtection.Storage;
+using System.Linq;
 using MediaBrowser.Controller.Collections;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Playlists;
@@ -64,25 +65,62 @@ namespace ListProtection.Tasks
             };
         }
 
+        /// <summary>
+        /// DIAGNOSTIC. Logs the per-field identity breakdown (via MemberIdentityLogger)
+        /// for every member of every ground truth entry, every run. Purpose: at any
+        /// point in time, a scan of the log tells you exactly what the plugin knows to
+        /// be true about each protected member — no guessing, no waiting for a repair
+        /// scenario to find out what fields a given type actually populates.
+        /// </summary>
+        private void LogAllMemberIdentities()
+        {
+            var entries = ListProtectionPlugin.Instance.GroundTruthStore.Load();
+            int memberCount = 0;
+
+            foreach (var kvp in entries)
+            {
+                var entry = kvp.Value;
+                var tag = entry.IsCollection
+                    ? "[ConsistencyCheckTask][MemberIdentity][Collection]"
+                    : "[ConsistencyCheckTask][MemberIdentity][Playlist]";
+
+                foreach (var member in entry.Members ?? Enumerable.Empty<GroundTruthMember>())
+                {
+                    MemberIdentityLogger.LogIdentity(member, _logger, $"{tag}[{entry.PlaylistName}]");
+                    memberCount++;
+                }
+            }
+
+            _logger.Info(
+                "[ConsistencyCheckTask] Member identity logged for {0} list(s), {1} member(s)",
+                entries.Count, memberCount);
+        }
+
         private async Task RunPipeline(IProgress<double> progress, CancellationToken cancellationToken, ConsistencyCheckTrigger trigger)
         {
             try
             {
                 progress?.Report(0);
 
-                _logger.Info("[ConsistencyCheckTask] Step 1/3 — Detecting missing members");
+                _logger.Info("[ConsistencyCheckTask] Step 1/4 — Logging ground truth member identity");
+                LogAllMemberIdentities();
+                progress?.Report(20);
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                _logger.Info("[ConsistencyCheckTask] Step 2/4 — Detecting missing members");
                 MissingMemberDetector.RunDetection(null, _libraryManager, _logger);
-                progress?.Report(33);
+                progress?.Report(45);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger.Info("[ConsistencyCheckTask] Step 2/3 — Discovering candidates");
+                _logger.Info("[ConsistencyCheckTask] Step 3/4 — Discovering candidates");
                 CandidateDiscoverer.RunDiscovery(null, _libraryManager, _logger);
-                progress?.Report(66);
+                progress?.Report(70);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger.Info("[ConsistencyCheckTask] Step 3/3 — Running auto-repair");
+                _logger.Info("[ConsistencyCheckTask] Step 4/4 — Running auto-repair");
                 await AutoRepairer.RunAutoRepair(
                     null,
                     _libraryManager,

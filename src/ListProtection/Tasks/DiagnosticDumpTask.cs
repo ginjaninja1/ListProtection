@@ -104,7 +104,7 @@ namespace ListProtection.Tasks
                         ListInternalId = playlist.InternalId,
                         ListName = playlist.Name ?? string.Empty,
                         MemberCount = liveMembers.Length,
-                        Members = liveMembers.Select(ToMemberDump).ToList()
+                        Members = liveMembers.Select(i => ToMemberDump(i, _logger, "[DiagnosticDumpTask][MemberIdentity][Playlist]")).ToList()
                     });
                 }
                 _logger.Info("[DiagnosticDumpTask] Playlists dumped: {0}", dump.Playlists.Count);
@@ -131,7 +131,7 @@ namespace ListProtection.Tasks
                         ListInternalId = collection.InternalId,
                         ListName = collection.Name ?? string.Empty,
                         MemberCount = liveMembers.Length,
-                        Members = liveMembers.Select(ToMemberDump).ToList()
+                        Members = liveMembers.Select(i => ToMemberDump(i, _logger, "[DiagnosticDumpTask][MemberIdentity][Collection]")).ToList()
                     });
                 }
                 _logger.Info("[DiagnosticDumpTask] Collections dumped: {0}", dump.Collections.Count);
@@ -149,7 +149,7 @@ namespace ListProtection.Tasks
 
                 foreach (var item in allAudio)
                 {
-                    var member = ToMemberDump(item);
+                    var member = ToMemberDump(item, null, null);
                     if (member.Watch)
                         dump.WatchedLibraryAudio.Add(member);
                 }
@@ -198,10 +198,13 @@ namespace ListProtection.Tasks
             }
         }
 
-        private static MemberDump ToMemberDump(BaseItem item)
+        private static MemberDump ToMemberDump(BaseItem item, ILogger logger, string identityTag)
         {
             // Reuse the proven capture path — identical fields to real GT capture.
             var gt = GroundTruthMemberFactory.FromItem(item);
+
+            if (identityTag != null)
+                MemberIdentityLogger.LogIdentity(gt, logger, identityTag);
 
             var watch = ContainsAnyWatchTerm(gt.Name)
                 || ContainsAnyWatchTerm(gt.Path)

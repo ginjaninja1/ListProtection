@@ -1,9 +1,7 @@
 ﻿using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
-using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
-using MediaBrowser.Model.Entities;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -17,8 +15,14 @@ namespace ListProtection.Services
     ///   ListRepairService (rebuild path)         — after atomic remove/re-add
     ///   ListRepairService (create-playlist path) — after CreatePlaylist
     ///
-    /// Media-type-specific fields are populated only for known types. Unknown types
-    /// receive base fields only — evidence collectors handle null fields gracefully.
+    /// Identity capture is generic wherever Emby exposes it generically: IndexNumber
+    /// and ProviderIds are base BaseItem members, so they are captured unconditionally
+    /// for every item, regardless of type. Only fields that genuinely differ in
+    /// meaning per type (Album/AlbumArtist/Artists for Audio, SeriesName/SeasonNumber/
+    /// ParentSeriesProviderIds for Episode) are populated behind a type check.
+    /// A new member type therefore needs no factory change to get base identity
+    /// evidence (Name, Path, ProviderIds, IndexNumber) captured — only genuinely new
+    /// signal types require new fields and a new branch here.
     /// </summary>
     public static class GroundTruthMemberFactory
     {
@@ -34,16 +38,14 @@ namespace ListProtection.Services
                 MediaType = item.GetType().Name,
                 RunTimeTicks = item.RunTimeTicks,
                 ProductionYear = item.ProductionYear,
+                IndexNumber = item.IndexNumber,
+                ProviderIds = CaptureProviderIds(item),
             };
 
             if (item is Audio audio)
                 PopulateAudio(member, audio);
             else if (item is Episode episode)
                 PopulateEpisode(member, episode);
-            else if (item is Movie movie)
-                PopulateMovie(member, movie);
-            else if (item is Series series)
-                PopulateSeriesDirect(member, series);
 
             return member;
         }
@@ -55,9 +57,6 @@ namespace ListProtection.Services
             member.Album = audio.Album ?? string.Empty;
             member.AlbumArtist = GetFirstAlbumArtist(audio);
             member.Artists = GetArtists(audio);
-            member.IndexNumber = audio.IndexNumber;
-
-            member.MusicBrainzTrackId = GetProviderId(audio, MetadataProviders.MusicBrainzTrack);
         }
 
         private static string GetFirstAlbumArtist(Audio audio)
@@ -88,56 +87,40 @@ namespace ListProtection.Services
         {
             member.SeriesName = episode.FindSeriesName();
             member.SeasonNumber = episode.ParentIndexNumber;  // ParentIndexNumber = season number
-            member.IndexNumber = episode.IndexNumber;        // IndexNumber = episode number
+            // IndexNumber (episode number) already captured generically above.
 
-            // Capture Series-level provider IDs — episode-level IDs are unreliable.
+            // Capture the PARENT SERIES' full ProviderIds — episode-level provider IDs
+            // are unreliable, so this is intentionally separate from member.ProviderIds
+            // (which holds the episode's own, already captured above).
             var series = episode.GetSeries(null);
-            if (series?.ProviderIds != null)
-            {
-                member.SeriesTvdbId = GetProviderIdFromDict(series.ProviderIds, MetadataProviders.Tvdb);
-                member.SeriesImdbId = GetProviderIdFromDict(series.ProviderIds, MetadataProviders.Imdb);
-            }
-        }
-
-        // ── Movie ──────────────────────────────────────────────────────────
-
-        private static void PopulateMovie(GroundTruthMember member, Movie movie)
-        {
-            // ProductionYear already captured in base (item.ProductionYear above)
-            member.ImdbId = GetProviderId(movie, MetadataProviders.Imdb);
-            member.TmdbId = GetProviderId(movie, MetadataProviders.Tmdb);
-        }
-
-        // ── Series (whole series as a direct collection member) ────────────
-        // Reuses SeriesTvdbId/SeriesImdbId — same fields Episode uses for its
-        // parent series, since the value means the same thing either way.
-
-        private static void PopulateSeriesDirect(GroundTruthMember member, Series series)
-        {
-            member.SeriesName = series.Name;
-            member.SeriesTvdbId = GetProviderId(series, MetadataProviders.Tvdb);
-            member.SeriesImdbId = GetProviderId(series, MetadataProviders.Imdb);
+            if (series != null)
+                member.ParentSeriesProviderIds = CaptureProviderIds(series);
         }
 
         // ── Helpers ────────────────────────────────────────────────────────
 
-        private static string GetProviderId(BaseItem item, MetadataProviders provider)
+        /// <summary>
+        /// Captures the full raw ProviderIds dictionary for any item, generically.
+        /// Never returns null — an item with no provider IDs yields an empty dict,
+        /// same as one whose ProviderIds property throws or is itself null.
+        /// </summary>
+        private static Dictionary<string, string> CaptureProviderIds(BaseItem item)
         {
-            try { return GetProviderIdFromDict(item.ProviderIds, provider); }
-            catch { return null; }
-        }
-
-        private static string GetProviderIdFromDict(
-            MediaBrowser.Model.Entities.ProviderIdDictionary ids,
-            MetadataProviders provider)
-        {
-            if (ids == null) return null;
+            var result = new Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
             try
             {
-                var key = provider.ToString();
-                return ids.TryGetValue(key, out var val) ? val : null;
+                var ids = item.ProviderIds;
+                if (ids == null) return result;
+
+                foreach (var kvp in ids)
+                {
+                    if (!string.IsNullOrEmpty(kvp.Key) && !string.IsNullOrEmpty(kvp.Value))
+                        result[kvp.Key] = kvp.Value;
+                }
             }
-            catch { return null; }
+            catch { /* leave result empty */ }
+
+            return result;
         }
     }
 }

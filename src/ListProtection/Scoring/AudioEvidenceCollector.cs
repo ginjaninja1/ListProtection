@@ -38,7 +38,7 @@ namespace ListProtection.Scoring
             if (!(candidate is Audio audio)) return facts;
 
             // MusicBrainz Track ID
-            var gtMbId = gt.MusicBrainzTrackId;
+            var gtMbId = GetGtProviderId(gt, "MusicBrainzTrack");
             var candidateMbId = GetProviderId(audio, MetadataProviders.MusicBrainzTrack);
             if (!string.IsNullOrEmpty(gtMbId) &&
                 !string.IsNullOrEmpty(candidateMbId) &&
@@ -74,6 +74,12 @@ namespace ListProtection.Scoring
                 facts.Add(new EvidenceFact(AudioFacts.DurationMatch));
 
             return facts;
+        }
+
+        private static string GetGtProviderId(GroundTruthMember gt, string providerKey)
+        {
+            if (gt?.ProviderIds == null) return null;
+            return gt.ProviderIds.TryGetValue(providerKey, out var val) ? val : null;
         }
 
         private static string GetProviderId(Audio audio, MetadataProviders provider)

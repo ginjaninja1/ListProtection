@@ -223,7 +223,8 @@ namespace ListProtection.Tasks
                 AlbumArtist = gt.AlbumArtist,
                 Artists = gt.Artists,
                 IndexNumber = gt.IndexNumber,
-                MusicBrainzTrackId = gt.MusicBrainzTrackId,
+                ProviderIds = gt.ProviderIds,
+                ParentSeriesProviderIds = gt.ParentSeriesProviderIds,
                 Watch = watch
             };
         }
@@ -238,7 +239,7 @@ namespace ListProtection.Tasks
         }
 
         private static string Describe(MemberDump m)
-            => $"Name='{m.Name}' | InternalId={m.InternalId} | Id={m.Id} | Type={m.MediaType} | Album='{m.Album}' | Path='{m.Path}'";
+            => $"Name='{m.Name}' | InternalId={m.InternalId} | Id={m.Id} | Type={m.MediaType} | Album='{m.Album}' | Path='{m.Path}' | ProviderIds=[{(m.ProviderIds != null ? string.Join(",", m.ProviderIds.Keys) : "")}]";
 
         // ── Dump models — plain POCOs, serialised as-is ──────────────────
 
@@ -271,7 +272,8 @@ namespace ListProtection.Tasks
             public string AlbumArtist { get; set; }
             public List<string> Artists { get; set; }
             public int? IndexNumber { get; set; }
-            public string MusicBrainzTrackId { get; set; }
+            public Dictionary<string, string> ProviderIds { get; set; }
+            public Dictionary<string, string> ParentSeriesProviderIds { get; set; }
             public bool Watch { get; set; }
         }
     }

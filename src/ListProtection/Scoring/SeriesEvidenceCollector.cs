@@ -28,22 +28,24 @@ namespace ListProtection.Scoring
             if (gt == null || candidate == null) return facts;
             if (!(candidate is Series series)) return facts;
 
-            if (!string.IsNullOrEmpty(gt.SeriesTvdbId))
+            var gtTvdb = GetGtProviderId(gt, MetadataProviders.Tvdb.ToString());
+            if (!string.IsNullOrEmpty(gtTvdb))
             {
                 var candidateTvdb = GetProviderId(series, MetadataProviders.Tvdb);
                 if (!string.IsNullOrEmpty(candidateTvdb) &&
-                    string.Equals(gt.SeriesTvdbId, candidateTvdb, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(gtTvdb, candidateTvdb, StringComparison.OrdinalIgnoreCase))
                 {
                     facts.Add(new EvidenceFact(SeriesFacts.TvdbIdMatch));
                     return facts;
                 }
             }
 
-            if (!string.IsNullOrEmpty(gt.SeriesImdbId))
+            var gtImdb = GetGtProviderId(gt, MetadataProviders.Imdb.ToString());
+            if (!string.IsNullOrEmpty(gtImdb))
             {
                 var candidateImdb = GetProviderId(series, MetadataProviders.Imdb);
                 if (!string.IsNullOrEmpty(candidateImdb) &&
-                    string.Equals(gt.SeriesImdbId, candidateImdb, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(gtImdb, candidateImdb, StringComparison.OrdinalIgnoreCase))
                 {
                     facts.Add(new EvidenceFact(SeriesFacts.ImdbIdMatch));
                     return facts;
@@ -56,6 +58,12 @@ namespace ListProtection.Scoring
                 facts.Add(new EvidenceFact(SeriesFacts.TitleMatch));
 
             return facts;
+        }
+
+        private static string GetGtProviderId(GroundTruthMember gt, string providerKey)
+        {
+            if (gt?.ProviderIds == null) return null;
+            return gt.ProviderIds.TryGetValue(providerKey, out var val) ? val : null;
         }
 
         private static string GetProviderId(Series series, MetadataProviders provider)

@@ -35,22 +35,24 @@ namespace ListProtection.Scoring
             if (gt == null || candidate == null) return facts;
             if (!(candidate is Movie movie)) return facts;
 
-            if (!string.IsNullOrEmpty(gt.ImdbId))
+            var gtImdb = GetGtProviderId(gt, MetadataProviders.Imdb.ToString());
+            if (!string.IsNullOrEmpty(gtImdb))
             {
                 var candidateImdb = GetProviderId(movie, MetadataProviders.Imdb);
                 if (!string.IsNullOrEmpty(candidateImdb) &&
-                    string.Equals(gt.ImdbId, candidateImdb, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(gtImdb, candidateImdb, StringComparison.OrdinalIgnoreCase))
                 {
                     facts.Add(new EvidenceFact(MovieFacts.ImdbIdMatch));
                     return facts;
                 }
             }
 
-            if (!string.IsNullOrEmpty(gt.TmdbId))
+            var gtTmdb = GetGtProviderId(gt, MetadataProviders.Tmdb.ToString());
+            if (!string.IsNullOrEmpty(gtTmdb))
             {
                 var candidateTmdb = GetProviderId(movie, MetadataProviders.Tmdb);
                 if (!string.IsNullOrEmpty(candidateTmdb) &&
-                    string.Equals(gt.TmdbId, candidateTmdb, StringComparison.OrdinalIgnoreCase))
+                    string.Equals(gtTmdb, candidateTmdb, StringComparison.OrdinalIgnoreCase))
                 {
                     facts.Add(new EvidenceFact(MovieFacts.TmdbIdMatch));
                     return facts;
@@ -73,6 +75,12 @@ namespace ListProtection.Scoring
                 facts.Add(new EvidenceFact(MovieFacts.DurationMatch));
 
             return facts;
+        }
+
+        private static string GetGtProviderId(GroundTruthMember gt, string providerKey)
+        {
+            if (gt?.ProviderIds == null) return null;
+            return gt.ProviderIds.TryGetValue(providerKey, out var val) ? val : null;
         }
 
         private static string GetProviderId(Movie movie, MetadataProviders provider)

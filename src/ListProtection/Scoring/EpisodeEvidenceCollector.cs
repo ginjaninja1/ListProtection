@@ -41,8 +41,11 @@ namespace ListProtection.Scoring
                                   !string.IsNullOrEmpty(candidateSeriesName) &&
                                   string.Equals(gt.SeriesName, candidateSeriesName, StringComparison.OrdinalIgnoreCase);
 
+            var gtSeriesTvdb = GetGtValue(gt.ParentSeriesProviderIds, MetadataProviders.Tvdb.ToString());
+            var gtSeriesImdb = GetGtValue(gt.ParentSeriesProviderIds, MetadataProviders.Imdb.ToString());
+
             var seriesProviderMatch = false;
-            if (!string.IsNullOrEmpty(gt.SeriesTvdbId) || !string.IsNullOrEmpty(gt.SeriesImdbId))
+            if (!string.IsNullOrEmpty(gtSeriesTvdb) || !string.IsNullOrEmpty(gtSeriesImdb))
             {
                 var series = episode.GetSeries(null);
                 if (series != null)
@@ -50,14 +53,14 @@ namespace ListProtection.Scoring
                     var ids = series.ProviderIds;
                     if (ids != null)
                     {
-                        if (!string.IsNullOrEmpty(gt.SeriesTvdbId) &&
+                        if (!string.IsNullOrEmpty(gtSeriesTvdb) &&
                             ids.TryGetValue(MetadataProviders.Tvdb.ToString(), out var tvdbId) &&
-                            string.Equals(gt.SeriesTvdbId, tvdbId, StringComparison.OrdinalIgnoreCase))
+                            string.Equals(gtSeriesTvdb, tvdbId, StringComparison.OrdinalIgnoreCase))
                             seriesProviderMatch = true;
 
-                        if (!string.IsNullOrEmpty(gt.SeriesImdbId) &&
+                        if (!string.IsNullOrEmpty(gtSeriesImdb) &&
                             ids.TryGetValue(MetadataProviders.Imdb.ToString(), out var imdbId) &&
-                            string.Equals(gt.SeriesImdbId, imdbId, StringComparison.OrdinalIgnoreCase))
+                            string.Equals(gtSeriesImdb, imdbId, StringComparison.OrdinalIgnoreCase))
                             seriesProviderMatch = true;
                     }
                 }
@@ -88,6 +91,12 @@ namespace ListProtection.Scoring
                 facts.Add(new EvidenceFact(EpisodeFacts.DurationMatch));
 
             return facts;
+        }
+
+        private static string GetGtValue(System.Collections.Generic.Dictionary<string, string> ids, string key)
+        {
+            if (ids == null) return null;
+            return ids.TryGetValue(key, out var val) ? val : null;
         }
     }
 

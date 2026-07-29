@@ -17,7 +17,7 @@ namespace ListProtection.Storage
         /// <summary>
         /// Playlist name at detection time. Display only — not used for logic.
         /// </summary>
-        public string PlaylistName { get; set; }
+        public string ListName { get; set; }
 
         /// <summary>
         /// UTC timestamp when this member was first identified as missing.

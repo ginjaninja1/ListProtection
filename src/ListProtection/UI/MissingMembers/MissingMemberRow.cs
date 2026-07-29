@@ -16,7 +16,7 @@ namespace ListProtection.UI.MissingMembers
     ///
     /// Column post-processing in MissingMembersUI.Build:
     ///   Key, IsSynthetic, Candidates → visible = false
-    ///   PlaylistName                 → groupIndex = 0, showWhenGrouped = false, allowEditing = false
+    ///   ListName                 → groupIndex = 0, showWhenGrouped = false, allowEditing = false
     ///   Forget                       → allowEditing = true (only editable column)
     ///   All others                   → allowEditing = false
     ///
@@ -28,10 +28,18 @@ namespace ListProtection.UI.MissingMembers
         [DisplayName("Key")]
         public string Key { get; set; }
 
-        [DisplayName("Playlist")]
-        public string PlaylistName { get; set; }
+        [DisplayName("List")]
+        public string ListName { get; set; }
 
-        [DisplayName("Member")]
+        /// <summary>
+        /// 1-based position of this member within the ground truth Members list at
+        /// detection time. This is the position the member will be restored to on repair.
+        /// 0 for synthetic "no missing members" rows.
+        /// </summary>
+        [DisplayName("Position")]
+        public int Position { get; set; }
+
+        [DisplayName("Missing Member")]
         public string MemberName { get; set; }
 
         [DisplayName("Path")]

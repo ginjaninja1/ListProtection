@@ -25,7 +25,7 @@ namespace ListProtection.Services
     ///   Collections have no user-defined order. RemoveFromCollection and AddToCollection
     ///   both take InternalIds — no ListItemEntryId involved.
     ///
-    /// Branch determined by GroundTruthEntry.IsCollection.
+    /// Branch determined by GroundTruthEntry.ListType.
     /// </summary>
     public class ListRepairService
     {
@@ -153,8 +153,8 @@ namespace ListProtection.Services
                 var repairedMissingIds = new HashSet<long>(repairs.Select(r => r.missingInternalId));
 
                 groundTruth.TryGetValue(oldListId, out var oldGtEntry);
-                var listName = oldGtEntry?.PlaylistName ?? "(unknown)";
-                var isCollection = oldGtEntry?.IsCollection ?? false;
+                var listName = oldGtEntry?.ListName ?? "(unknown)";
+                var isCollection = string.Equals(oldGtEntry?.ListType, "Collection", StringComparison.OrdinalIgnoreCase);
 
                 _logger.Info(
                     "[ListRepairService] List='{0}' | Type={1} | repairing {2} member(s) | oldId={3}",
@@ -289,7 +289,7 @@ namespace ListProtection.Services
                 groundTruth[activeListId] = new GroundTruthEntry
                 {
                     ListType = "Collection",
-                    PlaylistName = listName,
+                    ListName = listName,
                     CapturedAt = DateTime.UtcNow,
                     Members = updatedMembers
                 };
@@ -351,7 +351,7 @@ namespace ListProtection.Services
                 groundTruth[newGuidN] = new GroundTruthEntry
                 {
                     ListType = "Collection",
-                    PlaylistName = listName,
+                    ListName = listName,
                     CapturedAt = DateTime.UtcNow,
                     Members = newMembers
                 };
@@ -485,7 +485,7 @@ namespace ListProtection.Services
                 groundTruth[activeListId] = new GroundTruthEntry
                 {
                     ListType = "Playlist",
-                    PlaylistName = listName,
+                    ListName = listName,
                     IsPublic = oldGtEntry?.IsPublic,
                     CapturedAt = DateTime.UtcNow,
                     Members = updatedMembers
@@ -580,7 +580,7 @@ namespace ListProtection.Services
                 groundTruth[newGuidN] = new GroundTruthEntry
                 {
                     ListType = "Playlist",
-                    PlaylistName = listName,
+                    ListName = listName,
                     IsPublic = oldGtEntry?.IsPublic,
                     CapturedAt = DateTime.UtcNow,
                     Members = newMembers
@@ -637,7 +637,7 @@ namespace ListProtection.Services
                 if (record.PlaylistId != oldId) continue;
                 if (repairedMissingIds.Contains(record.Member?.InternalId ?? -1)) continue;
                 record.PlaylistId = newId;
-                record.PlaylistName = listName;
+                record.ListName = listName;
                 missingChanged = true;
             }
             foreach (var c in candidateRecords)
@@ -645,7 +645,7 @@ namespace ListProtection.Services
                 if (c.PlaylistId != oldId) continue;
                 if (repairedMissingIds.Contains(c.MissingMember?.InternalId ?? -1)) continue;
                 c.PlaylistId = newId;
-                c.PlaylistName = listName;
+                c.ListName = listName;
                 candidatesChanged = true;
             }
 
@@ -715,7 +715,7 @@ namespace ListProtection.Services
                 {
                     EventType = "Repair",
                     PlaylistId = activeListId,
-                    PlaylistName = listName,
+                    ListName = listName,
                     OccurredAt = DateTime.UtcNow,
                     Payload = string.Join("\n", payloadLines)
                 });

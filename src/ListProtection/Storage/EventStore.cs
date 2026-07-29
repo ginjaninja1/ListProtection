@@ -33,7 +33,9 @@ namespace ListProtection.Storage
             _fileSystem = applicationHost.Resolve<IFileSystem>();
 
             var appPaths = applicationHost.Resolve<IApplicationPaths>();
-            _filePath = Path.Combine(appPaths.PluginConfigurationsPath, pluginFullName + ".json");
+            var dataFolder = Path.Combine(appPaths.DataPath, "ListProtection");
+            Directory.CreateDirectory(dataFolder);
+            _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
             _logger.Info("[EventStore] Store file: {0}", _filePath);
         }
@@ -108,7 +110,7 @@ namespace ListProtection.Storage
 
                     _logger.Info(
                         "[EventStore] Appended event | type={0} | playlist={1}",
-                        entry.EventType ?? "(null)", entry.PlaylistName ?? "(null)");
+                        entry.EventType ?? "(null)", entry.ListName ?? "(null)");
                 }
                 catch (Exception ex)
                 {

@@ -56,7 +56,7 @@ namespace ListProtection.UI.MissingMembers
                             col.isSecondaryGridDataSource = true;
                             break;
 
-                        case "PlaylistName":
+                        case "ListName":
                             col.groupIndex = 0;
                             col.showWhenGrouped = false;
                             col.autoExpandGroup = false;

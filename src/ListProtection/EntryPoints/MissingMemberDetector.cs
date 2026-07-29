@@ -89,7 +89,7 @@ namespace ListProtection.EntryPoints
 
                     MediaBrowser.Controller.Entities.BaseItem[] liveMembers;
 
-                    if (entry.IsCollection)
+                    if (string.Equals(entry.ListType, "Collection", StringComparison.OrdinalIgnoreCase))
                     {
                         var collection = FindById(allCollections, guid) as BoxSet;
                         if (collection == null)
@@ -99,7 +99,7 @@ namespace ListProtection.EntryPoints
                         }
                         liveMembers = collection.GetItemList(new InternalItemsQuery());
                         logger.Info("[MissingMemberDetector] Live readback for collection '{0}' — {1} member(s)",
-                            entry.PlaylistName, liveMembers?.Length ?? 0);
+                            entry.ListName, liveMembers?.Length ?? 0);
                     }
                     else
                     {
@@ -112,7 +112,7 @@ namespace ListProtection.EntryPoints
                         // PROVEN: Playlist.GetItemList returns members in playlist order (ListItemOrder).
                         liveMembers = playlist.GetItemList(new InternalItemsQuery());
                         logger.Info("[MissingMemberDetector] Live readback for playlist '{0}' — {1} member(s)",
-                            entry.PlaylistName, liveMembers?.Length ?? 0);
+                            entry.ListName, liveMembers?.Length ?? 0);
                     }
 
                     var liveIds = new HashSet<long>();
@@ -128,7 +128,7 @@ namespace ListProtection.EntryPoints
                     // real-time events. This closes the gap where a scan alone — with no
                     // real-time listener deployed or enabled — would otherwise never learn
                     // about items added directly to a protected collection.
-                    if (entry.IsCollection && liveMembers != null)
+                    if (string.Equals(entry.ListType, "Collection", StringComparison.OrdinalIgnoreCase) && liveMembers != null)
                     {
                         var gtKnownIds = new HashSet<long>();
                         foreach (var existingMember in entry.Members)
@@ -144,9 +144,9 @@ namespace ListProtection.EntryPoints
 
                             logger.Info(
                                 "[MissingMemberDetector] New live member found in collection '{0}' not yet in ground truth — added: '{1}' | InternalId={2}",
-                                entry.PlaylistName, newMember.Name, newMember.InternalId);
+                                entry.ListName, newMember.Name, newMember.InternalId);
 
-                            newlyAddedMembers.Add((listIdN, entry.PlaylistName, newMember));
+                            newlyAddedMembers.Add((listIdN, entry.ListName, newMember));
                             groundTruthChanged = true;
                         }
                     }
@@ -175,7 +175,7 @@ namespace ListProtection.EntryPoints
                         var newEntry = new MissingMemberEntry
                         {
                             PlaylistId = listIdN,
-                            PlaylistName = entry.PlaylistName,
+                            ListName = entry.ListName,
                             DetectedAt = DateTime.UtcNow,
                             Member = member
                         };
@@ -212,7 +212,7 @@ namespace ListProtection.EntryPoints
                             {
                                 EventType = "GroundTruthUpdated",
                                 PlaylistId = listKvp.Key,
-                                PlaylistName = listKvp.Value[0].ListName ?? string.Empty,
+                                ListName = listKvp.Value[0].ListName ?? string.Empty,
                                 OccurredAt = DateTime.UtcNow,
                                 Payload = "Reconciled " + listKvp.Value.Count + " new member(s) found live but not yet in ground truth:\n" + string.Join("\n", payloadLines)
                             });
@@ -255,7 +255,7 @@ namespace ListProtection.EntryPoints
                             {
                                 EventType = "MissingDetected",
                                 PlaylistId = evKvp.Key,
-                                PlaylistName = evKvp.Value[0].PlaylistName ?? string.Empty,
+                                ListName = evKvp.Value[0].ListName ?? string.Empty,
                                 OccurredAt = DateTime.UtcNow,
                                 Payload = string.Join("\n", payloadLines)
                             });

@@ -239,7 +239,7 @@ namespace ListProtection.UI.MissingMembers
                 }
 
                 var isGhost = !liveIds.Contains(playlistId);
-                var basePlaylistName = entry.PlaylistName ?? "(unnamed)";
+                var basePlaylistName = entry.ListName ?? "(unnamed)";
                 var displayPlaylistName = isGhost
                     ? basePlaylistName + " [Will be recreated]"
                     : basePlaylistName;
@@ -256,10 +256,18 @@ namespace ListProtection.UI.MissingMembers
                     if (record.PlaylistId != playlistId) continue;
                     if (record.Member == null) continue;
 
+                    // Position = 1-based index of this member's Id within the current
+                    // ground truth Members list. This is the position it will be
+                    // restored to on repair. -1 (displayed as 0) if it can no longer
+                    // be found in ground truth (should not normally happen).
+                    var gtIndex = entry.Members.FindIndex(m =>
+                        string.Equals(m.Id, record.Member.Id, StringComparison.OrdinalIgnoreCase));
+
                     playlistMissingRows.Add(new MissingMemberRow
                     {
                         Key = playlistId + "_" + record.Member.InternalId,
-                        PlaylistName = displayPlaylistName,
+                        ListName = displayPlaylistName,
+                        Position = gtIndex >= 0 ? gtIndex + 1 : 0,
                         MemberName = record.Member.Name ?? "(unnamed)",
                         Path = record.Member.Path ?? string.Empty,
                         DetectedAt = record.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
@@ -278,7 +286,7 @@ namespace ListProtection.UI.MissingMembers
                     rows.Add(new MissingMemberRow
                     {
                         Key = "synthetic_" + playlistId,
-                        PlaylistName = displayPlaylistName,
+                        ListName = displayPlaylistName,
                         MemberName = "No missing members",
                         Path = string.Empty,
                         DetectedAt = string.Empty,

@@ -205,7 +205,7 @@ namespace ListProtection.UI.RepairDialog
                 repairRows.Add(new MissingMemberRow
                 {
                     Key = masterRow.Key,
-                    PlaylistName = masterRow.PlaylistName,
+                    ListName = masterRow.ListName,
                     MemberName = masterRow.MemberName,
                     Path = masterRow.Path,
                     DetectedAt = masterRow.DetectedAt,
@@ -365,7 +365,7 @@ namespace ListProtection.UI.RepairDialog
                 rows.Add(new MissingMemberRow
                 {
                     Key = "synthetic_" + _playlistId,
-                    PlaylistName = _playlistName,
+                    ListName = _playlistName,
                     MemberName = "No missing members",
                     IsSynthetic = true,
                     Candidates = new CandidateRow[0]
@@ -394,7 +394,7 @@ namespace ListProtection.UI.RepairDialog
                 rows.Add(new MissingMemberRow
                 {
                     Key = _playlistId + "_" + record.Member.InternalId,
-                    PlaylistName = _playlistName,
+                    ListName = _playlistName,
                     MemberName = record.Member.Name ?? "(unnamed)",
                     Path = record.Member.Path ?? string.Empty,
                     DetectedAt = record.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
@@ -491,7 +491,7 @@ namespace ListProtection.UI.RepairDialog
                 rows.Add(new MissingMemberRow
                 {
                     Key = key,
-                    PlaylistName = _playlistName,
+                    ListName = _playlistName,
                     MemberName = record.Member.Name ?? "(unnamed)",
                     Path = record.Member.Path ?? string.Empty,
                     DetectedAt = record.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",

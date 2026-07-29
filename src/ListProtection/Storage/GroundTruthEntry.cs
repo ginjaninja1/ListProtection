@@ -13,7 +13,7 @@ namespace ListProtection.Storage
         /// <summary>
         /// Display name at capture time. Not used for logic — Id is the durable key.
         /// </summary>
-        public string PlaylistName { get; set; }
+        public string ListName { get; set; }
 
         /// <summary>
         /// Playlist only: IsPublic value at capture time, for reinstatement.
@@ -27,14 +27,5 @@ namespace ListProtection.Storage
         public DateTime CapturedAt { get; set; }
 
         public List<GroundTruthMember> Members { get; set; } = new List<GroundTruthMember>();
-
-        // ── Helpers ────────────────────────────────────────────────────────
-
-        public bool IsCollection =>
-            string.Equals(ListType, "Collection", StringComparison.OrdinalIgnoreCase);
-
-        public bool IsPlaylist =>
-            ListType == null ||
-            string.Equals(ListType, "Playlist", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -87,7 +87,7 @@ namespace ListProtection.UI.RepairDialog
                         case "Key":
                         case "IsSynthetic":
                         case "Forget":
-                        case "PlaylistName":
+                        case "ListName":
                             col.visible = false;
                             col.allowEditing = false;
                             break;

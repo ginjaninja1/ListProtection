@@ -1,4 +1,5 @@
-﻿using ListProtection.Storage;
+﻿using ListProtection.Services;
+using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
@@ -6,9 +7,6 @@ using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Model.Logging;
 using MediaBrowser.Model.Querying;
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
 
 namespace ListProtection.EntryPoints
 {
@@ -16,12 +14,25 @@ namespace ListProtection.EntryPoints
     /// Production IServerEntryPoint — keeps ground truth in sync as playlist
     /// membership changes via Emby events.
     ///
-    /// Add flow (two-event):
-    ///   1. PlaylistItemsAdded fires → ListItemEntryId is 0 (not yet assigned)
-    ///      Record ListItemId in _pendingAdds and wait.
-    ///   2. ItemUpdated fires for same playlist → DB write complete.
-    ///      Readback via playlist.GetItemList(), match InternalId → ListItemEntryId.
-    ///      Write new GroundTruthMember to store.
+    /// Add flow (reconciliation, not two-event hand-off):
+    ///   PlaylistItemsAdded fires with ListItemEntryId == 0 (not yet assigned),
+    ///   so it is logged only — it carries no usable identity to act on.
+    ///   ItemUpdated then fires for the playlist once the DB write is complete.
+    ///   On every ItemUpdated for a protected playlist we do a full readback via
+    ///   playlist.GetItemList() and reconcile: any live member whose
+    ///   ListItemEntryId is not already present in ground truth is added via
+    ///   GroundTruthMemberFactory, so it is captured with full type-specific
+    ///   metadata identically to every other capture site.
+    ///
+    ///   This replaces an earlier design that queued ListItemIds from
+    ///   PlaylistItemsAdded in an in-memory dictionary and only acted on
+    ///   ItemUpdated if a matching queue entry existed. That hand-off was a
+    ///   single point of failure — any restart, missed event, or event-order
+    ///   surprise between the two events silently dropped the add forever,
+    ///   with no self-correction. Reconciliation is idempotent and safe to run
+    ///   on every ItemUpdated for a protected playlist: it only ever adds
+    ///   members that are live in the playlist but absent from ground truth,
+    ///   so there is no path left to silently lose a genuine add.
     ///
     /// Remove flow (single-event):
     ///   PlaylistItemsRemoved fires with ListItemEntryIds[] already populated.
@@ -30,7 +41,7 @@ namespace ListProtection.EntryPoints
     /// Repair suppression:
     ///   When ListRepairService is executing an atomic remove→add cycle it
     ///   registers the playlist InternalId in Plugin.RepairSuppressedLists.
-    ///   Both OnPlaylistItemsAdded and OnPlaylistItemsRemoved skip suppressed
+    ///   Both OnItemUpdated and OnPlaylistItemsRemoved skip suppressed
     ///   playlists entirely — repair owns the GT update for that window.
     ///   A warning is logged if a suppressed event is dropped, so the edge case
     ///   of a simultaneous user action during a repair is visible in logs.
@@ -48,11 +59,6 @@ namespace ListProtection.EntryPoints
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
         private readonly ILogger _logger;
-
-        // Key: playlist InternalId (long)
-        // Value: list of ListItemIds from the add event, awaiting readback
-        private readonly ConcurrentDictionary<long, List<long>> _pendingAdds
-            = new ConcurrentDictionary<long, List<long>>();
 
         public PlaylistMaintenanceService(
             ILibraryManager libraryManager,
@@ -77,42 +83,21 @@ namespace ListProtection.EntryPoints
 
         private void OnPlaylistItemsAdded(object sender, PlaylistItemsAddedEventArgs e)
         {
+            // ListItemEntryId is always 0 at this point (not yet assigned by the
+            // DB write), so this event carries no identity we can act on.
+            // Logged only for diagnostics — the actual ground truth update
+            // happens in OnItemUpdated via reconciliation, once the write has
+            // landed and ListItemEntryId is real.
             var playlist = e.Playlist;
 
             if (playlist == null || e.ListItems == null || e.ListItems.Length == 0)
                 return;
 
-            var playlistIdN = playlist.Id.ToString("N");
-
-            if (!IsProtected(playlistIdN))
-                return;
-
-            // Repair owns the GT update for this add cycle — skip maintenance queuing.
-            // Warning logged so simultaneous user actions during repair are visible.
-            var plugin = ListProtectionPlugin.Instance;
-            if (plugin != null && plugin.RepairSuppressedLists.ContainsKey(playlist.InternalId))
-            {
-                _logger.Warn(
-                    "[PlaylistMaintenanceService] PlaylistItemsAdded — repair in progress for '{0}' ({1}) — skipping readback queue (repair owns GT update)",
-                    playlist.Name ?? "(null)",
-                    playlistIdN);
-                return;
-            }
-
             _logger.Info(
-                "[PlaylistMaintenanceService] PlaylistItemsAdded — protected playlist '{0}' ({1}) | {2} item(s) — queuing readback",
+                "[PlaylistMaintenanceService] PlaylistItemsAdded — playlist '{0}' ({1}) | {2} item(s) — awaiting ItemUpdated for reconciliation",
                 playlist.Name ?? "(null)",
-                playlistIdN,
+                playlist.Id.ToString("N"),
                 e.ListItems.Length);
-
-            var pendingIds = new List<long>(e.ListItems.Length);
-            foreach (var item in e.ListItems)
-                pendingIds.Add(item.ListItemId);
-
-            _pendingAdds.AddOrUpdate(
-                playlist.InternalId,
-                pendingIds,
-                (_, existing) => { existing.AddRange(pendingIds); return existing; });
         }
 
         // ── ItemUpdated ────────────────────────────────────────────────────
@@ -122,33 +107,38 @@ namespace ListProtection.EntryPoints
             if (!(e.Item is Playlist playlist))
                 return;
 
-            if (!_pendingAdds.TryRemove(playlist.InternalId, out var pendingListItemIds))
-                return;
-
             var playlistIdN = playlist.Id.ToString("N");
 
-            _logger.Info(
-                "[PlaylistMaintenanceService] ItemUpdated — readback for playlist '{0}' ({1}) | expecting {2} new member(s)",
-                playlist.Name ?? "(null)",
-                playlistIdN,
-                pendingListItemIds.Count);
+            if (!IsProtected(playlistIdN))
+                return;
+
+            var plugin = ListProtectionPlugin.Instance;
+            if (plugin == null)
+            {
+                _logger.Error("[PlaylistMaintenanceService] Plugin instance is null — cannot update ground truth");
+                return;
+            }
+
+            // Repair owns the GT update for this window — skip reconciliation.
+            // Warning logged so simultaneous user actions during repair are visible.
+            if (plugin.RepairSuppressedLists.ContainsKey(playlist.InternalId))
+            {
+                _logger.Warn(
+                    "[PlaylistMaintenanceService] ItemUpdated — repair in progress for '{0}' ({1}) — skipping reconciliation (repair owns GT update)",
+                    playlist.Name ?? "(null)",
+                    playlistIdN);
+                return;
+            }
 
             try
             {
                 var members = playlist.GetItemList(new InternalItemsQuery());
 
-                if (members == null || members.Length == 0)
+                if (members == null)
                 {
                     _logger.Warn(
-                        "[PlaylistMaintenanceService] Readback returned empty for playlist {0} — cannot add member(s)",
+                        "[PlaylistMaintenanceService] Readback returned null for playlist {0}",
                         playlistIdN);
-                    return;
-                }
-
-                var plugin = ListProtectionPlugin.Instance;
-                if (plugin == null)
-                {
-                    _logger.Error("[PlaylistMaintenanceService] Plugin instance is null — cannot update ground truth");
                     return;
                 }
 
@@ -160,7 +150,7 @@ namespace ListProtection.EntryPoints
                     if (!entries.TryGetValue(playlistIdN, out var entry))
                     {
                         _logger.Warn(
-                            "[PlaylistMaintenanceService] No ground truth entry for playlist {0} — skipping add",
+                            "[PlaylistMaintenanceService] No ground truth entry for playlist {0} — skipping reconciliation",
                             playlistIdN);
                         return;
                     }
@@ -169,10 +159,9 @@ namespace ListProtection.EntryPoints
 
                     foreach (var item in members)
                     {
-                        if (!pendingListItemIds.Contains(item.InternalId))
-                            continue;
-
-                        // Duplicate guard — defend against double-fire or re-entry
+                        // ListItemEntryId is the durable per-slot identity within a
+                        // playlist (see class remarks) — a member already tracked
+                        // under this ListItemEntryId is not a new add.
                         var alreadyPresent = false;
                         foreach (var existing in entry.Members)
                         {
@@ -184,28 +173,17 @@ namespace ListProtection.EntryPoints
                         }
 
                         if (alreadyPresent)
-                        {
-                            _logger.Info(
-                                "[PlaylistMaintenanceService] Member ListItemEntryId={0} already in ground truth for playlist {1} — skipping",
-                                item.ListItemEntryId,
-                                playlistIdN);
                             continue;
-                        }
 
-                        entry.Members.Add(new GroundTruthMember
-                        {
-                            InternalId = item.InternalId,
-                            Id = item.Id.ToString("N"),
-                            Name = item.Name ?? string.Empty,
-                            Path = item.Path ?? string.Empty,
-                            ListItemEntryId = item.ListItemEntryId
-                        });
+                        var member = GroundTruthMemberFactory.FromItem(item);
+                        entry.Members.Add(member);
 
                         _logger.Info(
-                            "[PlaylistMaintenanceService] Added member '{0}' | InternalId={1} | ListItemEntryId={2} | playlist={3}",
+                            "[PlaylistMaintenanceService] Reconciled new member '{0}' | InternalId={1} | ListItemEntryId={2} | MediaType={3} | playlist={4}",
                             item.Name ?? "(null)",
                             item.InternalId,
                             item.ListItemEntryId,
+                            member.MediaType ?? "(null)",
                             playlistIdN);
 
                         added++;
@@ -219,12 +197,6 @@ namespace ListProtection.EntryPoints
                             added,
                             playlistIdN);
                     }
-                    else
-                    {
-                        _logger.Info(
-                            "[PlaylistMaintenanceService] No new members matched pending add list for playlist {0} — store unchanged",
-                            playlistIdN);
-                    }
                 }
                 finally
                 {
@@ -233,7 +205,7 @@ namespace ListProtection.EntryPoints
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistMaintenanceService] Readback/add failed", ex);
+                _logger.ErrorException("[PlaylistMaintenanceService] Readback/reconcile failed", ex);
             }
         }
 
@@ -304,9 +276,6 @@ namespace ListProtection.EntryPoints
                             removed++;
                             break; // ListItemEntryId is unique — stop after first match
                         }
-
-                        if (removed == 0 || entry.Members.Count == 0)
-                            continue;
                     }
 
                     if (removed > 0)

@@ -91,7 +91,7 @@ namespace ListProtection.UI.PlaylistManagement
                     }
 
                     var gtEntry = _groundTruthStore.Load().TryGetValue(openHistoryRow.Id, out var gt) ? gt : null;
-                    var listName = gtEntry?.PlaylistName ?? openHistoryRow.Name ?? "(unnamed)";
+                    var listName = gtEntry?.ListName ?? openHistoryRow.Name ?? "(unnamed)";
 
                     return new EventHistoryDialogView(
                         _pluginInfo, openHistoryRow.Id, listName,
@@ -110,7 +110,7 @@ namespace ListProtection.UI.PlaylistManagement
                     }
 
                     var gtEntry = _groundTruthStore.Load().TryGetValue(openGtRow.Id, out var gt) ? gt : null;
-                    var listName = gtEntry?.PlaylistName ?? openGtRow.Name ?? "(unnamed)";
+                    var listName = gtEntry?.ListName ?? openGtRow.Name ?? "(unnamed)";
 
                     return new GroundTruthDialogView(
                         _pluginInfo, openGtRow.Id, listName, _groundTruthStore, _logger);
@@ -128,7 +128,7 @@ namespace ListProtection.UI.PlaylistManagement
                     }
 
                     var gtEntry = _groundTruthStore.Load().TryGetValue(openRepairRow.Id, out var gt) ? gt : null;
-                    var listName = gtEntry?.PlaylistName ?? openRepairRow.Name ?? "(unnamed)";
+                    var listName = gtEntry?.ListName ?? openRepairRow.Name ?? "(unnamed)";
 
                     return new RepairDialogView(
                         _pluginInfo,
@@ -172,7 +172,7 @@ namespace ListProtection.UI.PlaylistManagement
                 {
                     var unprotectId = beingUnprotected[0];
                     var gtEntry = _groundTruthStore.Load().TryGetValue(unprotectId, out var gt) ? gt : null;
-                    var unprotectName = gtEntry?.PlaylistName
+                    var unprotectName = gtEntry?.ListName
                         ?? ui.PlaylistRows.FirstOrDefault(r => r.Id == unprotectId)?.Name
                         ?? "(unnamed)";
 
@@ -211,7 +211,7 @@ namespace ListProtection.UI.PlaylistManagement
                     foreach (var oldId in beingUnprotected)
                     {
                         var nameForEvent = gtBeforeRemoval.TryGetValue(oldId, out var oldGt)
-                            ? oldGt.PlaylistName
+                            ? oldGt.ListName
                             : (ui.PlaylistRows.FirstOrDefault(r => r.Id == oldId)?.Name ?? "(unnamed)");
                         WriteEvent("Unprotect", oldId, nameForEvent ?? "(unnamed)", string.Empty);
                     }
@@ -435,7 +435,7 @@ namespace ListProtection.UI.PlaylistManagement
                     entries[listId] = new GroundTruthEntry
                     {
                         ListType = capture.ListType,
-                        PlaylistName = capture.ListName,
+                        ListName = capture.ListName,
                         IsPublic = capture.IsPublic,
                         CapturedAt = DateTime.UtcNow,
                         Members = capture.Members
@@ -534,7 +534,7 @@ namespace ListProtection.UI.PlaylistManagement
                 if (listMissing.Count == 0) continue;
 
                 groundTruth.TryGetValue(listId, out var gtEntry);
-                var listName = gtEntry?.PlaylistName ?? "(unnamed)";
+                var listName = gtEntry?.ListName ?? "(unnamed)";
 
                 foreach (var missing in listMissing)
                 {
@@ -559,7 +559,7 @@ namespace ListProtection.UI.PlaylistManagement
                     rows.Add(new MissingMemberRow
                     {
                         Key = listId + "_" + missing.Member.InternalId,
-                        PlaylistName = listName,
+                        ListName = listName,
                         MemberName = missing.Member.Name ?? "(unnamed)",
                         Path = missing.Member.Path ?? string.Empty,
                         DetectedAt = missing.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",
@@ -605,7 +605,7 @@ namespace ListProtection.UI.PlaylistManagement
                 {
                     EventType = eventType,
                     PlaylistId = listId,
-                    PlaylistName = listName,
+                    ListName = listName,
                     OccurredAt = DateTime.UtcNow,
                     Payload = payload ?? string.Empty
                 });

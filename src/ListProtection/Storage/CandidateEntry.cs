@@ -20,7 +20,7 @@ namespace ListProtection.Storage
         /// <summary>
         /// Playlist name at discovery time. Display only.
         /// </summary>
-        public string PlaylistName { get; set; }
+        public string ListName { get; set; }
 
         /// <summary>
         /// The missing member this candidate was discovered for.

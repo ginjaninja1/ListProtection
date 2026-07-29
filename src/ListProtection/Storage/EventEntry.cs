@@ -23,7 +23,7 @@ namespace ListProtection.Storage
         /// <summary>Playlist Guid "N" format string.</summary>
         public string PlaylistId { get; set; }
 
-        public string PlaylistName { get; set; }
+        public string ListName { get; set; }
 
         public DateTime OccurredAt { get; set; }
 

@@ -80,13 +80,13 @@ namespace ListProtection.Tasks
             foreach (var kvp in entries)
             {
                 var entry = kvp.Value;
-                var tag = entry.IsCollection
+                var tag = string.Equals(entry.ListType, "Collection", StringComparison.OrdinalIgnoreCase)
                     ? "[ConsistencyCheckTask][MemberIdentity][Collection]"
                     : "[ConsistencyCheckTask][MemberIdentity][Playlist]";
 
                 foreach (var member in entry.Members ?? Enumerable.Empty<GroundTruthMember>())
                 {
-                    MemberIdentityLogger.LogIdentity(member, _logger, $"{tag}[{entry.PlaylistName}]");
+                    MemberIdentityLogger.LogIdentity(member, _logger, $"{tag}[{entry.ListName}]");
                     memberCount++;
                 }
             }

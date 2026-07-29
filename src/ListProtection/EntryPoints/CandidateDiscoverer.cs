@@ -127,7 +127,7 @@ namespace ListProtection.EntryPoints
             logger.Info(
                 "[CandidateDiscoverer] Processing missing member: '{0}' | InternalId={1} | MediaType={2} | playlist='{3}' ({4})",
                 member.Name, member.InternalId, mediaType,
-                missingEntry.PlaylistName, missingEntry.PlaylistId);
+                missingEntry.ListName, missingEntry.PlaylistId);
 
             var excludedIds = new HashSet<long>();
             if (gtStore.TryGetValue(missingEntry.PlaylistId, out var gtEntry) && gtEntry.Members != null)
@@ -208,7 +208,7 @@ namespace ListProtection.EntryPoints
                 var entry = new CandidateEntry
                 {
                     PlaylistId = missingEntry.PlaylistId,
-                    PlaylistName = missingEntry.PlaylistName,
+                    ListName = missingEntry.ListName,
                     MissingMember = member,
                     CandidateInternalId = item.InternalId,
                     CandidateId = item.Id.ToString("N"),
@@ -322,7 +322,7 @@ namespace ListProtection.EntryPoints
                     {
                         EventType = "CandidateFound",
                         PlaylistId = kvp.Key,
-                        PlaylistName = kvp.Value[0].PlaylistName ?? string.Empty,
+                        ListName = kvp.Value[0].ListName ?? string.Empty,
                         OccurredAt = DateTime.UtcNow,
                         Payload = string.Join("\n", payloadLines)
                     });

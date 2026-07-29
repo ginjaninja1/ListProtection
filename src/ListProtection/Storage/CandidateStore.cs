@@ -29,7 +29,9 @@ namespace ListProtection.Storage
             _fileSystem = applicationHost.Resolve<IFileSystem>();
 
             var appPaths = applicationHost.Resolve<IApplicationPaths>();
-            _filePath = Path.Combine(appPaths.PluginConfigurationsPath, pluginFullName + ".json");
+            var dataFolder = Path.Combine(appPaths.DataPath, "ListProtection");
+            Directory.CreateDirectory(dataFolder);
+            _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
             _logger.Info("[CandidateStore] Store file: {0}", _filePath);
         }

@@ -143,7 +143,7 @@ namespace ListProtection.Services
                     repairRows.Add(new MissingMemberRow
                     {
                         Key = key,
-                        PlaylistName = record.PlaylistName,
+                        ListName = record.ListName,
                         MemberName = record.Member.Name ?? "(unnamed)",
                         Path = record.Member.Path ?? string.Empty,
                         DetectedAt = record.DetectedAt.ToString("yyyy-MM-dd HH:mm") + " UTC",

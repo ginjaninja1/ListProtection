@@ -3,7 +3,7 @@
 namespace ListProtection.Configuration
 {
     /// <summary>
-    /// The plugin's persisted settings. Serialised to XML by Emby's tnative
+    /// The plugin's persisted settings. Serialised to XML by Emby's native
     /// BasePlugin&lt;T&gt; mechanism via Plugin.Instance.Configuration /
     /// SaveConfiguration(). No custom store, no hand-rolled JSON round-trip.
     /// </summary>

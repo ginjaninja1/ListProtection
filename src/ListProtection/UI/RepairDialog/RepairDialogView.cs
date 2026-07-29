@@ -32,7 +32,7 @@ namespace ListProtection.UI.RepairDialog
         private readonly Action _rebuildParentContent;
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
-        private readonly PlaylistManagementStore _playlistStore;
+        private readonly ListManagementStore _listStore;
         private readonly ListRepairService _repairService;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
@@ -47,7 +47,7 @@ namespace ListProtection.UI.RepairDialog
             Action rebuildParentContent,
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
-            PlaylistManagementStore playlistStore,
+            ListManagementStore listStore,
             ListRepairService repairService,
             IJsonSerializer jsonSerializer,
             ILogger logger)
@@ -60,7 +60,7 @@ namespace ListProtection.UI.RepairDialog
             _rebuildParentContent = rebuildParentContent;
             _missingMembersStore = missingMembersStore;
             _groundTruthStore = groundTruthStore;
-            _playlistStore = playlistStore;
+            _listStore = listStore;
             _repairService = repairService;
             _jsonSerializer = jsonSerializer;
             _logger = logger;

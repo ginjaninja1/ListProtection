@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel;
 
-namespace ListProtection.UI.PlaylistManagement
+namespace ListProtection.UI.ListManagement
 {
     /// <summary>
     /// Child grid row for Tab 1 master-detail — shows playlist metadata
@@ -10,9 +10,9 @@ namespace ListProtection.UI.PlaylistManagement
     /// only via the Members dialog (OpenGroundTruth button).
     ///
     /// Read-only: no editable columns, no onChangeCommand.
-    /// Bound via PlaylistRow.Detail (isSecondaryGridDataSource = true).
+    /// Bound via ListRow.Detail (isSecondaryGridDataSource = true).
     /// </summary>
-    public class PlaylistDetailRow
+    public class ListDetailRow
     {
         [DisplayName("Playlist ID")]
         public string PlaylistId { get; set; }

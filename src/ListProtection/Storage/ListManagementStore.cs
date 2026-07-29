@@ -15,7 +15,7 @@ namespace ListProtection.Storage
     /// Stores only the set of protected playlist IDs (Guid "N" format strings).
     /// All consumers call Load() to read and Save(set) to write — no caching at this layer.
     /// </summary>
-    public class PlaylistManagementStore
+    public class ListManagementStore
     {
         private readonly ILogger _logger;
         private readonly IJsonSerializer _jsonSerializer;
@@ -23,7 +23,7 @@ namespace ListProtection.Storage
         private readonly string _filePath;
         private readonly object _lock = new object();
 
-        public PlaylistManagementStore(IApplicationHost applicationHost, ILogger logger, string pluginFullName)
+        public ListManagementStore(IApplicationHost applicationHost, ILogger logger, string pluginFullName)
         {
             _logger = logger;
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
@@ -34,7 +34,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[PlaylistManagementStore] Store file: {0}", _filePath);
+            _logger.Info("[ListManagementStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -49,7 +49,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[PlaylistManagementStore] No store file found — returning empty set");
+                        _logger.Info("[ListManagementStore] No store file found — returning empty set");
                         return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     }
 
@@ -57,13 +57,13 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var ids = data?.ProtectedIds ?? new List<string>();
-                        _logger.Info("[PlaylistManagementStore] Loaded {0} protected playlist ID(s)", ids.Count);
+                        _logger.Info("[ListManagementStore] Loaded {0} protected playlist ID(s)", ids.Count);
                         return new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistManagementStore] Load failed — returning empty set", ex);
+                    _logger.ErrorException("[ListManagementStore] Load failed — returning empty set", ex);
                     return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 }
             }
@@ -86,11 +86,11 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[PlaylistManagementStore] Saved {0} protected playlist ID(s)", protectedIds.Count);
+                    _logger.Info("[ListManagementStore] Saved {0} protected playlist ID(s)", protectedIds.Count);
                 }
                 catch (Exception ex)
                 {
-                    _logger.ErrorException("[PlaylistManagementStore] Save failed", ex);
+                    _logger.ErrorException("[ListManagementStore] Save failed", ex);
                 }
             }
         }

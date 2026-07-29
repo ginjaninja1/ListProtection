@@ -1,13 +1,13 @@
 ﻿using System.ComponentModel;
 
-namespace ListProtection.UI.PlaylistManagement
+namespace ListProtection.UI.ListManagement
 {
     /// <summary>
     /// Child grid row for Tab 1 master-detail — shows ground truth members
     /// of a protected playlist when the row is expanded.
     ///
     /// Read-only: no editable columns, no onChangeCommand.
-    /// Bound via PlaylistRow.Members (isSecondaryGridDataSource = true).
+    /// Bound via ListRow.Members (isSecondaryGridDataSource = true).
     /// </summary>
     public class MemberRow
     {

@@ -270,7 +270,7 @@ namespace ListProtection.EntryPoints
             var plugin = ListProtectionPlugin.Instance;
             if (plugin == null) return false;
 
-            var protectedIds = plugin.PlaylistStore.Load();
+            var protectedIds = plugin.ListStore.Load();
             return protectedIds.Contains(collectionIdN);
         }
 

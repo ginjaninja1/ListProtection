@@ -5,9 +5,9 @@ using MediaBrowser.Model.Attributes;
 using System;
 using System.ComponentModel;
 
-namespace ListProtection.UI.PlaylistManagement
+namespace ListProtection.UI.ListManagement
 {
-    public class PlaylistManagementUI : EditableOptionsBase
+    public class ListManagementUI : EditableOptionsBase
     {
         public override string EditorTitle => "Managed Lists";
         public override string EditorDescription => "Toggle protection on a playlist or collection to track its membership.";
@@ -20,11 +20,11 @@ namespace ListProtection.UI.PlaylistManagement
         public DxDataGrid PlaylistGrid { get; set; }
 
         [Browsable(false)]
-        public PlaylistRow[] PlaylistRows { get; set; } = Array.Empty<PlaylistRow>();
+        public ListRow[] PlaylistRows { get; set; } = Array.Empty<ListRow>();
 
-        public static PlaylistManagementUI Build(PlaylistRow[] rows, string convergenceStatusText = "")
+        public static ListManagementUI Build(ListRow[] rows, string convergenceStatusText = "")
         {
-            var options = new DxGridOptions(new PlaylistRow(), "Id", false, true, true, false)
+            var options = new DxGridOptions(new ListRow(), "Id", false, true, true, false)
             {
                 editing = new DxGridEditing
                 {
@@ -96,7 +96,7 @@ namespace ListProtection.UI.PlaylistManagement
                 }
             }
 
-            var detailOptions = new DxGridOptions(new PlaylistDetailRow(), "PlaylistId", false, false, false, false)
+            var detailOptions = new DxGridOptions(new ListDetailRow(), "PlaylistId", false, false, false, false)
             {
                 heightMode = DxGridOptions.GridHeightMode.auto
             };
@@ -113,7 +113,7 @@ namespace ListProtection.UI.PlaylistManagement
                 detailGridOptions = detailOptions
             };
 
-            return new PlaylistManagementUI
+            return new ListManagementUI
             {
                 PlaylistGrid = new DxDataGrid(options),
                 PlaylistRows = rows,

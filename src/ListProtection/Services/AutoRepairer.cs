@@ -80,7 +80,7 @@ namespace ListProtection.Services
                 var repairService = new ListRepairService(
                     plugin.MissingMembersStore,
                     plugin.GroundTruthStore,
-                    plugin.PlaylistStore,
+                    plugin.ListStore,
                     libraryManager,
                     playlistManager,
                     collectionManager,

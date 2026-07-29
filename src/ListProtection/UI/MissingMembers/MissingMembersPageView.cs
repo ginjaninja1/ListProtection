@@ -19,7 +19,7 @@ namespace ListProtection.UI.MissingMembers
     {
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
-        private readonly PlaylistManagementStore _playlistStore;
+        private readonly ListManagementStore _listStore;
         private readonly IJsonSerializer _jsonSerializer;
         private readonly ILogger _logger;
         private readonly ILibraryManager _libraryManager;
@@ -29,7 +29,7 @@ namespace ListProtection.UI.MissingMembers
             PluginInfo pluginInfo,
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
-            PlaylistManagementStore playlistStore,
+            ListManagementStore listStore,
             IJsonSerializer jsonSerializer,
             ILogger logger,
             ILibraryManager libraryManager,
@@ -38,7 +38,7 @@ namespace ListProtection.UI.MissingMembers
         {
             _missingMembersStore = missingMembersStore;
             _groundTruthStore = groundTruthStore;
-            _playlistStore = playlistStore;
+            _listStore = listStore;
             _jsonSerializer = jsonSerializer;
             _logger = logger;
             _libraryManager = libraryManager;
@@ -201,7 +201,7 @@ namespace ListProtection.UI.MissingMembers
 
         private MissingMemberRow[] BuildRows()
         {
-            var protectedIds = _playlistStore.Load();
+            var protectedIds = _listStore.Load();
             var groundTruth = _groundTruthStore.Load();
             var missingRecords = _missingMembersStore.Load();
             var candidateRecords = ListProtectionPlugin.Instance.CandidateStore.Load();

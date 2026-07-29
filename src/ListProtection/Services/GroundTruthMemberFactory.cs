@@ -11,7 +11,7 @@ namespace ListProtection.Services
     /// Single source of truth for constructing a GroundTruthMember from a live BaseItem.
     ///
     /// Three capture sites exist in the codebase:
-    ///   PlaylistManagementPageView.CaptureMembers   — initial protect
+    ///   ListManagementPageView.CaptureMembers   — initial protect
     ///   ListRepairService (rebuild path)         — after atomic remove/re-add
     ///   ListRepairService (create-playlist path) — after CreatePlaylist
     ///

@@ -1,13 +1,13 @@
 ﻿using System.ComponentModel;
 
-namespace ListProtection.UI.PlaylistManagement
+namespace ListProtection.UI.ListManagement
 {
     /// <summary>
     /// Row for the managed lists grid — covers both Playlists and Collections.
     /// ListType: "Playlist" | "Collection"
     /// Status: "GT/MM/MC" summary.
     /// </summary>
-    public class PlaylistRow
+    public class ListRow
     {
         [DisplayName("Id")]
         public string Id { get; set; }
@@ -41,6 +41,6 @@ namespace ListProtection.UI.PlaylistManagement
         public bool RepairAll { get; set; }
 
         [DisplayName("Detail")]
-        public PlaylistDetailRow[] Detail { get; set; } = new PlaylistDetailRow[0];
+        public ListDetailRow[] Detail { get; set; } = new ListDetailRow[0];
     }
 }

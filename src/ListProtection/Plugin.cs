@@ -38,7 +38,7 @@ namespace ListProtection
         public readonly ConcurrentDictionary<long, byte> RepairSuppressedLists
             = new ConcurrentDictionary<long, byte>();
 
-        public PlaylistManagementStore PlaylistStore { get; }
+        public ListManagementStore ListStore { get; }
         public GroundTruthStore GroundTruthStore { get; }
         public MissingMembersStore MissingMembersStore { get; }
         public CandidateStore CandidateStore { get; }
@@ -63,7 +63,7 @@ namespace ListProtection
             _userManager = userManager;
             _logger = logManager.GetLogger(this.Name);
 
-            PlaylistStore = new PlaylistManagementStore(applicationHost, _logger, this.Name + ".Playlist");
+            ListStore = new ListManagementStore(applicationHost, _logger, this.Name + ".List");
             GroundTruthStore = new GroundTruthStore(applicationHost, _logger, this.Name + ".GroundTruth");
             MissingMembersStore = new MissingMembersStore(applicationHost, _logger, this.Name + ".MissingMembers");
             CandidateStore = new CandidateStore(applicationHost, _logger, this.Name + ".Candidates");
@@ -93,7 +93,7 @@ namespace ListProtection
                         new MainController(
                             this.GetPluginInfo(),
                             _applicationHost,
-                            PlaylistStore,
+                            ListStore,
                             GroundTruthStore,
                             MissingMembersStore,
                             _libraryManager,

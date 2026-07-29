@@ -20,12 +20,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace ListProtection.UI.PlaylistManagement
+namespace ListProtection.UI.ListManagement
 {
-    internal class PlaylistManagementPageView : PluginPageView
+    internal class ListManagementPageView : PluginPageView
     {
         private readonly PluginInfo _pluginInfo;
-        private readonly PlaylistManagementStore _store;
+        private readonly ListManagementStore _store;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly ILibraryManager _libraryManager;
         private readonly ICollectionManager _collectionManager;
@@ -33,9 +33,9 @@ namespace ListProtection.UI.PlaylistManagement
         private readonly ILogger _logger;
         private readonly ListRepairService _repairService;
 
-        public PlaylistManagementPageView(
+        public ListManagementPageView(
             PluginInfo pluginInfo,
-            PlaylistManagementStore store,
+            ListManagementStore store,
             GroundTruthStore groundTruthStore,
             ILibraryManager libraryManager,
             ICollectionManager collectionManager,
@@ -61,7 +61,7 @@ namespace ListProtection.UI.PlaylistManagement
 
         public override async Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
-            _logger.Info("[PlaylistManagementPageView] RunCommand | commandId={0}", commandId ?? "(null)");
+            _logger.Info("[ListManagementPageView] RunCommand | commandId={0}", commandId ?? "(null)");
 
             try
             {
@@ -71,7 +71,7 @@ namespace ListProtection.UI.PlaylistManagement
                     return this;
                 }
 
-                var ui = _jsonSerializer.DeserializeFromString<PlaylistManagementUI>(data);
+                var ui = _jsonSerializer.DeserializeFromString<ListManagementUI>(data);
 
                 if (ui?.PlaylistRows == null)
                 {
@@ -250,7 +250,7 @@ namespace ListProtection.UI.PlaylistManagement
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] RunCommand failed", ex);
+                _logger.ErrorException("[ListManagementPageView] RunCommand failed", ex);
             }
 
             ContentData = BuildOptions();
@@ -267,18 +267,18 @@ namespace ListProtection.UI.PlaylistManagement
             base.OnDialogResult(dialogView, completedOk, data);
         }
 
-        private PlaylistManagementUI BuildOptions()
+        private ListManagementUI BuildOptions()
         {
             try
             {
                 var protectedIds = _store.Load();
                 var rows = BuildRows(protectedIds);
-                return PlaylistManagementUI.Build(rows, BuildConvergenceStatusText());
+                return ListManagementUI.Build(rows, BuildConvergenceStatusText());
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] BuildOptions failed", ex);
-                return PlaylistManagementUI.Build(Array.Empty<PlaylistRow>());
+                _logger.ErrorException("[ListManagementPageView] BuildOptions failed", ex);
+                return ListManagementUI.Build(Array.Empty<ListRow>());
             }
         }
 
@@ -304,7 +304,7 @@ namespace ListProtection.UI.PlaylistManagement
             return $"✅ Last converged {ageText} ({sourceText}). Run a library scan for the most current view.";
         }
 
-        private PlaylistRow[] BuildRows(HashSet<string> protectedIds)
+        private ListRow[] BuildRows(HashSet<string> protectedIds)
         {
             var groundTruth = _groundTruthStore.Load();
             var missingRecords = ListProtectionPlugin.Instance.MissingMembersStore.Load();
@@ -328,7 +328,7 @@ namespace ListProtection.UI.PlaylistManagement
                 Recursive = true
             }) ?? Array.Empty<BaseItem>();
 
-            var rows = new List<PlaylistRow>(playlists.Length + collections.Length);
+            var rows = new List<ListRow>(playlists.Length + collections.Length);
 
             foreach (var item in playlists)
                 rows.Add(BuildRow(item, "Playlist", protectedIds, groundTruth, missingRecords, allCandidates, idsWithHistory));
@@ -339,7 +339,7 @@ namespace ListProtection.UI.PlaylistManagement
             return rows.ToArray();
         }
 
-        private PlaylistRow BuildRow(
+        private ListRow BuildRow(
             BaseItem item,
             string listType,
             HashSet<string> protectedIds,
@@ -393,7 +393,7 @@ namespace ListProtection.UI.PlaylistManagement
                 }
             }
 
-            return new PlaylistRow
+            return new ListRow
             {
                 Id = idString,
                 InternalId = item.InternalId,
@@ -407,7 +407,7 @@ namespace ListProtection.UI.PlaylistManagement
                 OpenHistory = false,
                 Detail = new[]
                 {
-                    new PlaylistDetailRow
+                    new ListDetailRow
                     {
                         PlaylistId = idString,
                         Path = item.Path ?? string.Empty,
@@ -442,7 +442,7 @@ namespace ListProtection.UI.PlaylistManagement
                     };
 
                     _logger.Info(
-                        "[PlaylistManagementPageView] Captured {0} member(s) for {1} '{2}' ({3})",
+                        "[ListManagementPageView] Captured {0} member(s) for {1} '{2}' ({3})",
                         capture.Members.Count, capture.ListType, capture.ListName, listId);
                 }
 
@@ -450,7 +450,7 @@ namespace ListProtection.UI.PlaylistManagement
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] ReconcileGroundTruth failed", ex);
+                _logger.ErrorException("[ListManagementPageView] ReconcileGroundTruth failed", ex);
             }
         }
 
@@ -460,7 +460,7 @@ namespace ListProtection.UI.PlaylistManagement
             {
                 if (!Guid.TryParseExact(listIdN, "N", out var guid))
                 {
-                    _logger.Warn("[PlaylistManagementPageView] CaptureMembers — invalid Guid: {0}", listIdN);
+                    _logger.Warn("[ListManagementPageView] CaptureMembers — invalid Guid: {0}", listIdN);
                     return null;
                 }
 
@@ -508,12 +508,12 @@ namespace ListProtection.UI.PlaylistManagement
                     };
                 }
 
-                _logger.Warn("[PlaylistManagementPageView] CaptureMembers — not found as playlist or collection: {0}", listIdN);
+                _logger.Warn("[ListManagementPageView] CaptureMembers — not found as playlist or collection: {0}", listIdN);
                 return null;
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] CaptureMembers failed for " + listIdN, ex);
+                _logger.ErrorException("[ListManagementPageView] CaptureMembers failed for " + listIdN, ex);
                 return null;
             }
         }
@@ -593,7 +593,7 @@ namespace ListProtection.UI.PlaylistManagement
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] PurgeStaleDetectionData failed", ex);
+                _logger.ErrorException("[ListManagementPageView] PurgeStaleDetectionData failed", ex);
             }
         }
 
@@ -612,7 +612,7 @@ namespace ListProtection.UI.PlaylistManagement
             }
             catch (Exception ex)
             {
-                _logger.ErrorException("[PlaylistManagementPageView] WriteEvent failed", ex);
+                _logger.ErrorException("[ListManagementPageView] WriteEvent failed", ex);
             }
         }
 

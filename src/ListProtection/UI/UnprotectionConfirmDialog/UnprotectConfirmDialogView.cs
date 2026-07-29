@@ -42,7 +42,7 @@ namespace ListProtection.UI.UnprotectConfirmDialog
         private readonly ILogger _logger;
 
         // Callbacks executed on confirmed unprotect — avoids circular dependency
-        // on PlaylistManagementPageView. The parent passes lambdas at construction.
+        // on ListManagementPageView. The parent passes lambdas at construction.
         private readonly Action _executeUnprotect;
         private readonly Action _rebuildParentContent;
 

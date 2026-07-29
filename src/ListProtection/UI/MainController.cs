@@ -2,7 +2,7 @@
 using ListProtection.Storage;
 using ListProtection.UI.Config;
 using ListProtection.UI.MissingMembers;
-using ListProtection.UI.PlaylistManagement;
+using ListProtection.UI.ListManagement;
 using ListProtection.UIBaseClasses;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Collections;
@@ -21,7 +21,7 @@ namespace ListProtection.UI
     internal class MainController : ControllerBase, IHasTabbedUIPages
     {
         private readonly PluginInfo _pluginInfo;
-        private readonly PlaylistManagementStore _playlistStore;
+        private readonly ListManagementStore _listStore;
         private readonly GroundTruthStore _groundTruthStore;
         private readonly MissingMembersStore _missingMembersStore;
         private readonly ILibraryManager _libraryManager;
@@ -36,7 +36,7 @@ namespace ListProtection.UI
         public MainController(
             PluginInfo pluginInfo,
             IServerApplicationHost applicationHost,
-            PlaylistManagementStore playlistStore,
+            ListManagementStore listStore,
             GroundTruthStore groundTruthStore,
             MissingMembersStore missingMembersStore,
             ILibraryManager libraryManager,
@@ -47,7 +47,7 @@ namespace ListProtection.UI
             : base(pluginInfo.Id)
         {
             _pluginInfo = pluginInfo;
-            _playlistStore = playlistStore;
+            _listStore = listStore;
             _groundTruthStore = groundTruthStore;
             _missingMembersStore = missingMembersStore;
             _libraryManager = libraryManager;
@@ -60,7 +60,7 @@ namespace ListProtection.UI
             _repairService = new ListRepairService(
                 _missingMembersStore,
                 _groundTruthStore,
-                _playlistStore,
+                _listStore,
                 _libraryManager,
                 _playlistManager,
                 _collectionManager,
@@ -80,9 +80,9 @@ namespace ListProtection.UI
                 pluginInfo,
                 "ListProtection",
                 "ListProtection",
-                info => new PlaylistManagementPageView(
+                info => new ListManagementPageView(
                     info,
-                    _playlistStore,
+                    _listStore,
                     _groundTruthStore,
                     _libraryManager,
                     _collectionManager,
@@ -101,9 +101,9 @@ namespace ListProtection.UI
 
         public override Task<IPluginUIView> CreateDefaultPageView()
         {
-            IPluginUIView view = new PlaylistManagementPageView(
+            IPluginUIView view = new ListManagementPageView(
                 _pluginInfo,
-                _playlistStore,
+                _listStore,
                 _groundTruthStore,
                 _libraryManager,
                 _collectionManager,

@@ -31,7 +31,7 @@ namespace ListProtection.Services
     {
         private readonly MissingMembersStore _missingMembersStore;
         private readonly GroundTruthStore _groundTruthStore;
-        private readonly PlaylistManagementStore _playlistStore;
+        private readonly ListManagementStore _listStore;
         private readonly ILibraryManager _libraryManager;
         private readonly IPlaylistManager _playlistManager;
         private readonly ICollectionManager _collectionManager;
@@ -48,7 +48,7 @@ namespace ListProtection.Services
         public ListRepairService(
             MissingMembersStore missingMembersStore,
             GroundTruthStore groundTruthStore,
-            PlaylistManagementStore playlistStore,
+            ListManagementStore listStore,
             ILibraryManager libraryManager,
             IPlaylistManager playlistManager,
             ICollectionManager collectionManager,
@@ -57,7 +57,7 @@ namespace ListProtection.Services
         {
             _missingMembersStore = missingMembersStore;
             _groundTruthStore = groundTruthStore;
-            _playlistStore = playlistStore;
+            _listStore = listStore;
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
             _collectionManager = collectionManager;
@@ -83,7 +83,7 @@ namespace ListProtection.Services
                 missingRecords = _missingMembersStore.Load();
                 candidateRecords = plugin.CandidateStore.Load();
                 groundTruth = _groundTruthStore.Load();
-                protectedIds = _playlistStore.Load();
+                protectedIds = _listStore.Load();
             }
             finally
             {
@@ -730,7 +730,7 @@ namespace ListProtection.Services
         {
             var plugin = ListProtectionPlugin.Instance;
             plugin.WriterLock.Wait();
-            try { _playlistStore.Save(protectedIds); }
+            try { _listStore.Save(protectedIds); }
             finally { plugin.WriterLock.Release(); }
         }
 

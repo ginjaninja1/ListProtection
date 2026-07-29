@@ -11,7 +11,7 @@
 
 	</PropertyGroup>
 
-	<!-- FIXED: Debug mode now turns off Optimization so breakpoints work properly -->
+	<!-- FIXED: Debug mode now turns off Optimization so breakpoints work zproperly -->
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
 		<DebugType>portable</DebugType>
 		<Optimize>False</Optimize>

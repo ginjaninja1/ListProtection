@@ -69,6 +69,7 @@ namespace ListProtection.EntryPoints
             _libraryManager.ItemUpdated += OnItemUpdated;
             _playlistManager.PlaylistItemsAdded += OnPlaylistItemsAdded;
             _playlistManager.PlaylistItemsRemoved += OnPlaylistItemsRemoved;
+            _playlistManager.PlaylistItemsMoved += OnPlaylistItemsMoved;
 
             _logger.Info("[PlaylistMaintenanceService] Subscribed to playlist events");
         }
@@ -335,6 +336,106 @@ namespace ListProtection.EntryPoints
             }
         }
 
+        // ── PlaylistItemsMoved ──────────────────────────────────────────────
+
+        private void OnPlaylistItemsMoved(object sender, PlaylistItemsMovedEventArgs e)
+        {
+            var playlist = e.Playlist;
+
+            if (playlist == null || e.ListItemEntryIds == null || e.ListItemEntryIds.Length == 0)
+                return;
+
+            var playlistIdN = playlist.Id.ToString("N");
+
+            if (!IsProtected(playlistIdN))
+                return;
+
+            // Repair owns the GT update for this cycle — skip maintenance GT reorder.
+            // Warning logged so simultaneous user actions during repair are visible.
+            var plugin = ListProtectionPlugin.Instance;
+            if (plugin != null && plugin.RepairSuppressedLists.ContainsKey(playlist.InternalId))
+            {
+                _logger.Warn(
+                    "[PlaylistMaintenanceService] PlaylistItemsMoved — repair in progress for '{0}' ({1}) — skipping GT reorder (repair owns GT update)",
+                    playlist.Name ?? "(null)",
+                    playlistIdN);
+                return;
+            }
+
+            _logger.Info(
+                "[PlaylistMaintenanceService] PlaylistItemsMoved — protected playlist '{0}' ({1}) | {2} entry id(s) moving to index {3}",
+                playlist.Name ?? "(null)",
+                playlistIdN,
+                e.ListItemEntryIds.Length,
+                e.NewIndex);
+
+            try
+            {
+                plugin.WriterLock.Wait();
+                try
+                {
+                    var entries = plugin.GroundTruthStore.Load();
+
+                    if (!entries.TryGetValue(playlistIdN, out var entry))
+                    {
+                        _logger.Warn(
+                            "[PlaylistMaintenanceService] No ground truth entry for playlist {0} — skipping reorder",
+                            playlistIdN);
+                        return;
+                    }
+
+                    // Pull the moved members out (preserving their relative order),
+                    // then reinsert as a contiguous block starting at NewIndex.
+                    var moving = new List<GroundTruthMember>();
+
+                    foreach (var entryId in e.ListItemEntryIds)
+                    {
+                        var member = entry.Members.Find(m => m.ListItemEntryId == entryId);
+                        if (member == null)
+                        {
+                            _logger.Warn(
+                                "[PlaylistMaintenanceService] PlaylistItemsMoved — ListItemEntryId={0} not found in ground truth for playlist {1} — skipping that entry",
+                                entryId,
+                                playlistIdN);
+                            continue;
+                        }
+
+                        moving.Add(member);
+                    }
+
+                    if (moving.Count == 0)
+                    {
+                        _logger.Warn(
+                            "[PlaylistMaintenanceService] PlaylistItemsMoved fired but no matching ListItemEntryIds found in ground truth for playlist {0} — store unchanged",
+                            playlistIdN);
+                        return;
+                    }
+
+                    foreach (var member in moving)
+                        entry.Members.Remove(member);
+
+                    var insertAt = Math.Min(Math.Max(e.NewIndex, 0), entry.Members.Count);
+                    entry.Members.InsertRange(insertAt, moving);
+
+                    plugin.GroundTruthStore.Save(entries);
+
+                    _logger.Info(
+                        "[PlaylistMaintenanceService] Reordered {0} member(s) to index {1} in ground truth for playlist {2}",
+                        moving.Count,
+                        insertAt,
+                        playlistIdN);
+                }
+                finally
+                {
+                    plugin.WriterLock.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[PlaylistMaintenanceService] Reorder failed", ex);
+            }
+        }
+
         // ── Helpers ────────────────────────────────────────────────────────
 
         private bool IsProtected(string playlistIdN)
@@ -353,6 +454,7 @@ namespace ListProtection.EntryPoints
             _libraryManager.ItemUpdated -= OnItemUpdated;
             _playlistManager.PlaylistItemsAdded -= OnPlaylistItemsAdded;
             _playlistManager.PlaylistItemsRemoved -= OnPlaylistItemsRemoved;
+            _playlistManager.PlaylistItemsMoved -= OnPlaylistItemsMoved;
 
             _logger.Info("[PlaylistMaintenanceService] Disposed — unsubscribed from all events");
         }

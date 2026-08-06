@@ -5,7 +5,7 @@
 		<AssemblyName>ListProtection</AssemblyName>
 		<RootNamespace>ListProtection</RootNamespace>
 		<LangVersion>latest</LangVersion>
-		<Version>0.0.0.4</Version>
+		<Version>0.0.0.5</Version>
 		<Nullable>annotations</Nullable>
 
 

@@ -105,15 +105,20 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
+            var pendingIds = new List<long>(e.ListItems.Length);
+            var listItemIdsLog = new List<string>(e.ListItems.Length);
+            foreach (var item in e.ListItems)
+            {
+                pendingIds.Add(item.ListItemId);
+                listItemIdsLog.Add(item.ListItemId.ToString());
+            }
+
             _logger.Debug(
-                "[PlaylistMaintenanceService] PlaylistItemsAdded — protected playlist '{0}' ({1}) | {2} item(s) — queuing readback",
+                "[PlaylistMaintenanceService] PlaylistItemsAdded — protected playlist '{0}' ({1}) | {2} item(s) — ListItemId(s): {3} — queuing readback",
                 playlist.Name ?? "(null)",
                 playlistIdN,
-                e.ListItems.Length);
-
-            var pendingIds = new List<long>(e.ListItems.Length);
-            foreach (var item in e.ListItems)
-                pendingIds.Add(item.ListItemId);
+                e.ListItems.Length,
+                string.Join(",", listItemIdsLog));
 
             _pendingAdds.AddOrUpdate(
                 playlist.InternalId,
@@ -134,14 +139,27 @@ namespace ListProtection.EntryPoints
             var playlistIdN = playlist.Id.ToString("N");
 
             _logger.Debug(
-                "[PlaylistMaintenanceService] ItemUpdated — readback for playlist '{0}' ({1}) | expecting {2} new member(s)",
+                "[PlaylistMaintenanceService] ItemUpdated — readback for playlist '{0}' ({1}) | expecting {2} new member(s) — pending ListItemId(s): {3}",
                 playlist.Name ?? "(null)",
                 playlistIdN,
-                pendingListItemIds.Count);
+                pendingListItemIds.Count,
+                string.Join(",", pendingListItemIds));
 
             try
             {
                 var members = playlist.GetItemList(new InternalItemsQuery());
+
+                if (members != null)
+                {
+                    var readbackLog = new List<string>(members.Length);
+                    foreach (var m in members)
+                        readbackLog.Add(m.InternalId + "/entry=" + m.ListItemEntryId + "/" + (m.Name ?? "(null)"));
+                    _logger.Debug(
+                        "[PlaylistMaintenanceService] Readback for playlist {0} | {1} live member(s): {2}",
+                        playlistIdN,
+                        members.Length,
+                        string.Join(" | ", readbackLog));
+                }
 
                 if (members == null || members.Length == 0)
                 {
@@ -174,6 +192,7 @@ namespace ListProtection.EntryPoints
                     }
 
                     addedMembers = new List<GroundTruthMember>();
+                    var reconciled = ReconcileEntryIds(playlist, entry, playlistIdN);
 
                     foreach (var item in members)
                     {
@@ -218,12 +237,13 @@ namespace ListProtection.EntryPoints
                             playlist.Name ?? "(unnamed)");
                     }
 
-                    if (addedMembers.Count > 0)
+                    if (addedMembers.Count > 0 || reconciled)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Debug(
-                            "[PlaylistMaintenanceService] Saved {0} new member(s) to ground truth for playlist {1}",
+                            "[PlaylistMaintenanceService] Saved {0} new member(s) (reconciled={1}) to ground truth for playlist {2}",
                             addedMembers.Count,
+                            reconciled,
                             playlistIdN);
                     }
                     else
@@ -297,6 +317,7 @@ namespace ListProtection.EntryPoints
                     }
 
                     removedMembers = new List<GroundTruthMember>();
+                    var reconciled = ReconcileEntryIds(playlist, entry, playlistIdN);
 
                     foreach (var entryId in e.ListItemEntryIds)
                     {
@@ -317,12 +338,13 @@ namespace ListProtection.EntryPoints
                         }
                     }
 
-                    if (removedMembers.Count > 0)
+                    if (removedMembers.Count > 0 || reconciled)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Debug(
-                            "[PlaylistMaintenanceService] Removed {0} member(s) from ground truth for playlist {1}",
+                            "[PlaylistMaintenanceService] Removed {0} member(s) (reconciled={1}) from ground truth for playlist {2}",
                             removedMembers.Count,
+                            reconciled,
                             playlistIdN);
                     }
                     else
@@ -373,10 +395,10 @@ namespace ListProtection.EntryPoints
             }
 
             _logger.Debug(
-                "[PlaylistMaintenanceService] PlaylistItemsMoved — protected playlist '{0}' ({1}) | {2} entry id(s) moving to index {3}",
+                "[PlaylistMaintenanceService] PlaylistItemsMoved — protected playlist '{0}' ({1}) | entry id(s) [{2}] moving to index {3}",
                 playlist.Name ?? "(null)",
                 playlistIdN,
-                e.ListItemEntryIds.Length,
+                string.Join(",", e.ListItemEntryIds),
                 e.NewIndex);
 
             try
@@ -396,6 +418,17 @@ namespace ListProtection.EntryPoints
                             playlistIdN);
                         return;
                     }
+
+                    var gtLog = new List<string>(entry.Members.Count);
+                    foreach (var m in entry.Members)
+                        gtLog.Add(m.InternalId + "/entry=" + m.ListItemEntryId + "/" + (m.Name ?? "(null)"));
+                    _logger.Debug(
+                        "[PlaylistMaintenanceService] GT snapshot for playlist {0} | {1} member(s): {2}",
+                        playlistIdN,
+                        entry.Members.Count,
+                        string.Join(" | ", gtLog));
+
+                    var reconciled = ReconcileEntryIds(playlist, entry, playlistIdN);
 
                     // Pull the moved members out (preserving their relative order),
                     // then reinsert as a contiguous block starting at NewIndex.
@@ -418,9 +451,13 @@ namespace ListProtection.EntryPoints
 
                     if (moving.Count == 0)
                     {
+                        if (reconciled)
+                            plugin.GroundTruthStore.Save(entries);
+
                         _logger.Warn(
-                            "[PlaylistMaintenanceService] PlaylistItemsMoved fired but no matching ListItemEntryIds found in ground truth for playlist {0} — store unchanged",
-                            playlistIdN);
+                            "[PlaylistMaintenanceService] PlaylistItemsMoved fired but no matching ListItemEntryIds found in ground truth for playlist {0} (reconciled={1}) — store unchanged apart from any reconciliation",
+                            playlistIdN,
+                            reconciled);
                         return;
                     }
 
@@ -433,9 +470,13 @@ namespace ListProtection.EntryPoints
                     plugin.GroundTruthStore.Save(entries);
 
                     _logger.Info(
-                        "[List Protection] Reordered {0} member(s) in '{1}'",
+                        "[List Protection] Reordered {0} member(s) in '{1}' ({2}) to index {3} | entry id(s): {4} | name(s): {5}",
                         moving.Count,
-                        playlist.Name ?? "(unnamed)");
+                        playlist.Name ?? "(unnamed)",
+                        playlistIdN,
+                        insertAt,
+                        string.Join(",", moving.ConvertAll(m => m.ListItemEntryId.ToString())),
+                        string.Join(" | ", moving.ConvertAll(m => m.Name ?? "(unnamed)")));
                 }
                 finally
                 {
@@ -451,6 +492,55 @@ namespace ListProtection.EntryPoints
         }
 
         // ── Helpers ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Re-validates entry.Members' ListItemEntryId values against a live playlist
+        /// readback, keyed on InternalId (durable identity). Emby can silently reassign
+        /// ListItemEntryId for existing members — e.g. AddToPlaylist queues a FullRefresh
+        /// that has been observed to renumber every row in the list, not just the added
+        /// one (see Evidence.md). ListItemEntryId is therefore treated as provisional and
+        /// is re-confirmed here immediately before any caller matches against it.
+        ///
+        /// Members whose InternalId is not found in the live readback are left untouched —
+        /// that is a missing-member condition, not a drift condition, and stays the
+        /// responsibility of existing missing-member detection.
+        ///
+        /// Caller must already hold plugin.WriterLock. Returns true if any correction
+        /// was made (caller decides whether/when to persist).
+        /// </summary>
+        private bool ReconcileEntryIds(Playlist playlist, GroundTruthEntry entry, string playlistIdN)
+        {
+            var members = playlist.GetItemList(new InternalItemsQuery());
+            if (members == null || members.Length == 0)
+                return false;
+
+            var liveByInternalId = new Dictionary<long, long>(members.Length);
+            foreach (var item in members)
+                liveByInternalId[item.InternalId] = item.ListItemEntryId;
+
+            var corrected = false;
+
+            foreach (var member in entry.Members)
+            {
+                if (!liveByInternalId.TryGetValue(member.InternalId, out var liveEntryId))
+                    continue;
+
+                if (liveEntryId == member.ListItemEntryId)
+                    continue;
+
+                _logger.Debug(
+                    "[PlaylistMaintenanceService] Reconciled drifted ListItemEntryId for '{0}' in playlist {1} | {2} -> {3}",
+                    member.Name ?? "(null)",
+                    playlistIdN,
+                    member.ListItemEntryId,
+                    liveEntryId);
+
+                member.ListItemEntryId = liveEntryId;
+                corrected = true;
+            }
+
+            return corrected;
+        }
 
         private bool IsProtected(string playlistIdN)
         {

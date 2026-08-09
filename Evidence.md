@@ -217,3 +217,25 @@ Returns Task.FromResult<IPluginUIView>(null). Returning null closes a dialog. Fo
   For collection GT capture: ListItemEntryId is 0, order is not guaranteed, members are a set.
   For collection repair: RemoveFromCollection then AddToCollection with InternalIds only.
   For collection recreation: CreateCollection returns BoxSet directly — use boxSet.Id.ToString("N").
+
+  --- LIST/PLAYLIST ENTRY-ID VOLATILITY (PROVEN — decompile + observed, 2026-08-09) ---
+
+  A list-membership "entry id" (the join-table row id linking a list to a
+  member) is not a durable identifier for that member — it is only a
+  transient credential for the current API/event calls. It can be silently
+  reassigned to ALL existing members, not just ones being touched, when
+  certain list mutation APIs queue an internal full metadata refresh
+  (observed: adding a member queued a FullRefresh which renumbered every
+  entry id in the list on next readback, well before the next event fired).
+
+  This has two implications for anything treating list order/membership as
+  ground truth:
+    - Never persist a list-entry id as a lookup key without re-validating it
+      against a live readback immediately before use. Treat it as
+      provisional, re-confirmed every time, not as stored fact.
+    - The member's own durable item id (independent of list membership) is
+      the only safe join key for reconciling a stored entry id against a
+      live readback.
+  This applies to every mutation path (add/remove/move), not just the one
+  that happens to trigger the refresh — any of them can be handed a stale
+  entry id if drift happened between capture and use.

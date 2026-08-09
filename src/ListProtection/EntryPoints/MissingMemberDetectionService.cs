@@ -58,7 +58,7 @@ namespace ListProtection.EntryPoints
             _playlistManager = playlistManager;
             _collectionManager = collectionManager;
             _userManager = userManager;
-            _logger = logManager.GetLogger(nameof(MissingMemberDetectionService));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public void Run()
@@ -68,7 +68,7 @@ namespace ListProtection.EntryPoints
             _libraryManager.ItemUpdated += OnItemUpdated;
             _providerManager.RefreshCompleted += OnRefreshCompleted;
 
-            _logger.Info("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + ItemUpdated + RefreshCompleted active");
+            _logger.Debug("[MissingMemberDetectionService] Started — ItemRemoved + ItemAdded + ItemUpdated + RefreshCompleted active");
         }
 
         private bool IsEventDrivenRepairEnabled()
@@ -136,7 +136,7 @@ namespace ListProtection.EntryPoints
 
             foreach (var listId in affectedLists)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[MissingMemberDetectionService] {0} removed (InternalId={1}) — running detection for list {2}",
                     typeName, removedInternalId, listId);
                 MissingMemberDetector.RunDetection(listId, _libraryManager, _logger);
@@ -168,13 +168,13 @@ namespace ListProtection.EntryPoints
 
             if (affectedLists.Count == 0)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[MissingMemberDetectionService] Folder removed but no GT members under '{0}' — skipping",
                     removedFolderPath);
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[MissingMemberDetectionService] Folder removed '{0}' — {1} affected list(s)",
                 removedFolderPath, affectedLists.Count);
 
@@ -182,7 +182,7 @@ namespace ListProtection.EntryPoints
 
             foreach (var listId in affectedLists)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[MissingMemberDetectionService] Running detection for list {0}", listId);
                 MissingMemberDetector.RunDetection(listId, _libraryManager, _logger);
                 QueueCandidateDiscovery(discoveryKey, listId);
@@ -262,7 +262,7 @@ namespace ListProtection.EntryPoints
 
                 if (affectedLists.Count == 0) return;
 
-                _logger.Info(
+                _logger.Debug(
                     "[MissingMemberDetectionService] ItemUpdated '{0}' — grandparent matches missing member path(s) — queuing discovery for {1} list(s)",
                     item.Name ?? "(null)", affectedLists.Count);
 
@@ -302,7 +302,7 @@ namespace ListProtection.EntryPoints
 
             if (affectedLists.Count == 0) return;
 
-            _logger.Info(
+            _logger.Debug(
                 "[MissingMemberDetectionService] Folder added '{0}' — parent matches missing member paths — queuing discovery for {1} list(s)",
                 addedFolderPath, affectedLists.Count);
 
@@ -368,17 +368,17 @@ namespace ListProtection.EntryPoints
 
                 if (listsToDiscover == null) return;
 
-                _logger.Info(
+                _logger.Debug(
                     "[MissingMemberDetectionService] RefreshCompleted '{0}' — running candidate discovery for {1} list(s)",
                     refreshedItem.Name ?? "(null)", listsToDiscover.Count);
 
                 foreach (var listId in listsToDiscover)
                 {
-                    _logger.Info(
+                    _logger.Debug(
                         "[MissingMemberDetectionService] Running candidate discovery for list {0}", listId);
                     CandidateDiscoverer.RunDiscovery(listId, _libraryManager, _logger);
 
-                    _logger.Info(
+                    _logger.Debug(
                         "[MissingMemberDetectionService] Attempting auto-repair for list {0}", listId);
 
                     AutoRepairer.RunAutoRepair(
@@ -410,7 +410,7 @@ namespace ListProtection.EntryPoints
             _libraryManager.ItemAdded -= OnItemAdded;
             _libraryManager.ItemUpdated -= OnItemUpdated;
             _providerManager.RefreshCompleted -= OnRefreshCompleted;
-            _logger.Info("[MissingMemberDetectionService] Disposed");
+            _logger.Debug("[MissingMemberDetectionService] Disposed");
         }
     }
 }

@@ -68,7 +68,7 @@ namespace ListProtection.Services
         public async Task ExecuteRepairs(MissingMemberRow[] rows)
         {
             var user = _userManager.GetUserList(new UserQuery())[0];
-            _logger.Info("[ListRepairService] ExecuteRepairs — user={0}", user.Name);
+            _logger.Debug("[ListRepairService] ExecuteRepairs — user={0}", user.Name);
 
             var plugin = ListProtectionPlugin.Instance;
 
@@ -136,11 +136,11 @@ namespace ListProtection.Services
 
             if (repairsByList.Count == 0)
             {
-                _logger.Info("[ListRepairService] No repair candidates selected");
+                _logger.Debug("[ListRepairService] No repair candidates selected");
                 return;
             }
 
-            _logger.Info("[ListRepairService] {0} list(s) to repair", repairsByList.Count);
+            _logger.Debug("[ListRepairService] {0} list(s) to repair", repairsByList.Count);
 
             var missingChanged = false;
             var candidatesChanged = false;
@@ -157,8 +157,8 @@ namespace ListProtection.Services
                 var isCollection = string.Equals(oldGtEntry?.ListType, "Collection", StringComparison.OrdinalIgnoreCase);
 
                 _logger.Info(
-                    "[ListRepairService] List='{0}' | Type={1} | repairing {2} member(s) | oldId={3}",
-                    listName, isCollection ? "Collection" : "Playlist", repairs.Count, oldListId);
+                    "[List Protection] Repairing {0} member(s) in '{1}'",
+                    repairs.Count, listName);
 
                 if (!Guid.TryParseExact(oldListId, "N", out var oldGuid))
                 {
@@ -187,17 +187,17 @@ namespace ListProtection.Services
                 if (groundTruthChanged)
                 {
                     _groundTruthStore.Save(groundTruth);
-                    _logger.Info("[ListRepairService] GroundTruthStore saved");
+                    _logger.Debug("[ListRepairService] GroundTruthStore saved");
                 }
                 if (missingChanged)
                 {
                     _missingMembersStore.Save(missingRecords);
-                    _logger.Info("[ListRepairService] MissingMembersStore saved");
+                    _logger.Debug("[ListRepairService] MissingMembersStore saved");
                 }
                 if (candidatesChanged)
                 {
                     plugin.CandidateStore.Save(candidateRecords);
-                    _logger.Info("[ListRepairService] CandidateStore saved");
+                    _logger.Debug("[ListRepairService] CandidateStore saved");
                 }
             }
             finally
@@ -205,7 +205,7 @@ namespace ListProtection.Services
                 plugin.WriterLock.Release();
             }
 
-            _logger.Info("[ListRepairService] ExecuteRepairs complete");
+            _logger.Debug("[ListRepairService] ExecuteRepairs complete");
         }
 
         // ── Collection repair ──────────────────────────────────────────────
@@ -243,7 +243,7 @@ namespace ListProtection.Services
                     missingToCandidate[missingId] = candidateId;
 
                 var removeIds = repairs.Select(r => r.missingInternalId).ToArray();
-                _logger.Info("[ListRepairService] Collection: removing {0} member(s) from '{1}'", removeIds.Length, listName);
+                _logger.Debug("[ListRepairService] Collection: removing {0} member(s) from '{1}'", removeIds.Length, listName);
                 try
                 {
                     _collectionManager.RemoveFromCollection(existingCollection, removeIds);
@@ -255,7 +255,7 @@ namespace ListProtection.Services
                 }
 
                 var addIds = repairs.Select(r => r.candidateInternalId).ToArray();
-                _logger.Info("[ListRepairService] Collection: adding {0} candidate(s) to '{1}'", addIds.Length, listName);
+                _logger.Debug("[ListRepairService] Collection: adding {0} candidate(s) to '{1}'", addIds.Length, listName);
                 try
                 {
                     await _collectionManager.AddToCollection(existingCollection.InternalId, addIds);
@@ -298,7 +298,7 @@ namespace ListProtection.Services
             else
             {
                 // Collection gone — recreate
-                _logger.Info("[ListRepairService] Collection GuidN={0} not found — calling CreateCollection", oldListId);
+                _logger.Debug("[ListRepairService] Collection GuidN={0} not found — calling CreateCollection", oldListId);
 
                 var missingToCandidate = new Dictionary<long, long>();
                 foreach (var (missingId, candidateId) in repairs)
@@ -335,7 +335,8 @@ namespace ListProtection.Services
                 var newGuidN = newCollection.Id.ToString("N");
                 activeListId = newGuidN;
 
-                _logger.Info("[ListRepairService] New collection | GuidN={0} | InternalId={1}", newGuidN, newCollection.InternalId);
+                _logger.Info("[List Protection] Recreated collection '{0}'", listName);
+                _logger.Debug("[ListRepairService] New collection | GuidN={0} | InternalId={1}", newGuidN, newCollection.InternalId);
 
                 protectedIds.Remove(oldListId);
                 protectedIds.Add(newGuidN);
@@ -366,7 +367,8 @@ namespace ListProtection.Services
             result.MissingChanged |= removeResult.missingChanged;
             result.CandidatesChanged |= removeResult.candidatesChanged;
 
-            _logger.Info("[ListRepairService] Collection repair complete | '{0}' | activeId={1}", listName, activeListId);
+            _logger.Info("[List Protection] Repair complete for '{0}'", listName);
+            _logger.Debug("[ListRepairService] Collection repair complete | '{0}' | activeId={1}", listName, activeListId);
             return result;
         }
 
@@ -420,7 +422,7 @@ namespace ListProtection.Services
                         try
                         {
                             await _playlistManager.RemoveFromPlaylist(activePlaylist, currentEntryIds);
-                            _logger.Info("[ListRepairService] RemoveFromPlaylist succeeded");
+                            _logger.Debug("[ListRepairService] RemoveFromPlaylist succeeded");
                         }
                         catch (Exception ex)
                         {
@@ -449,7 +451,7 @@ namespace ListProtection.Services
                             skipDuplicates: false,
                             user: user,
                             cancellationToken: CancellationToken.None);
-                        _logger.Info("[ListRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
+                        _logger.Debug("[ListRepairService] AddToPlaylist succeeded | {0} item(s)", desiredInternalIds.Count);
                     }
                     catch (Exception ex)
                     {
@@ -492,12 +494,12 @@ namespace ListProtection.Services
                 };
                 result.GroundTruthChanged = true;
 
-                _logger.Info("[ListRepairService] Ground truth updated | GuidN={0} | members={1}", activeListId, updatedMembers.Count);
+                _logger.Debug("[ListRepairService] Ground truth updated | GuidN={0} | members={1}", activeListId, updatedMembers.Count);
             }
             else
             {
                 // Playlist gone — recreate
-                _logger.Info("[ListRepairService] Playlist GuidN={0} not found — calling CreatePlaylist", oldListId);
+                _logger.Debug("[ListRepairService] Playlist GuidN={0} not found — calling CreatePlaylist", oldListId);
 
                 var missingToCandidate = new Dictionary<long, long>();
                 foreach (var (missingId, candidateId) in repairs)
@@ -550,7 +552,8 @@ namespace ListProtection.Services
                 var newGuidN = resolvedItems[0].Id.ToString("N");
                 activeListId = newGuidN;
 
-                _logger.Info("[ListRepairService] New playlist | GuidN={0} | InternalId={1}", newGuidN, newInternalId);
+                _logger.Info("[List Protection] Recreated playlist '{0}'", listName);
+                _logger.Debug("[ListRepairService] New playlist | GuidN={0} | InternalId={1}", newGuidN, newInternalId);
 
                 protectedIds.Remove(oldListId);
                 protectedIds.Add(newGuidN);
@@ -589,7 +592,7 @@ namespace ListProtection.Services
                     groundTruth.Remove(oldListId);
                 result.GroundTruthChanged = true;
 
-                _logger.Info("[ListRepairService] GroundTruthStore entry written | GuidN={0} | members={1}", newGuidN, newMembers.Count);
+                _logger.Debug("[ListRepairService] GroundTruthStore entry written | GuidN={0} | members={1}", newGuidN, newMembers.Count);
             }
 
             WriteRepairEvent(activeListId, listName, repairs, repairedMissingIds, missingRecords, candidateRecords, oldGtEntry);
@@ -598,7 +601,8 @@ namespace ListProtection.Services
             result.MissingChanged |= removeResult.missingChanged;
             result.CandidatesChanged |= removeResult.candidatesChanged;
 
-            _logger.Info("[ListRepairService] Playlist repair complete | '{0}' | activeId={1}", listName, activeListId);
+            _logger.Info("[List Protection] Repair complete for '{0}'", listName);
+            _logger.Debug("[ListRepairService] Playlist repair complete | '{0}' | activeId={1}", listName, activeListId);
             return result;
         }
 

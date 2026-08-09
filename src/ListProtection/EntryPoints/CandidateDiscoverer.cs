@@ -42,7 +42,7 @@ namespace ListProtection.EntryPoints
             ILibraryManager libraryManager,
             ILogger logger)
         {
-            logger.Info(
+            logger.Debug(
                 "[CandidateDiscoverer] RunDiscovery starting | target={0}",
                 targetPlaylistIdN ?? "ALL");
 
@@ -62,7 +62,7 @@ namespace ListProtection.EntryPoints
 
                 if (missing == null || missing.Count == 0)
                 {
-                    logger.Info("[CandidateDiscoverer] No missing members — nothing to discover");
+                    logger.Debug("[CandidateDiscoverer] No missing members — nothing to discover");
                     return;
                 }
 
@@ -86,7 +86,7 @@ namespace ListProtection.EntryPoints
                     var mediaType = missingEntry.Member?.MediaType ?? "Audio";
                     if (!itemPoolByType.TryGetValue(mediaType, out var pool) || pool.Length == 0)
                     {
-                        logger.Info(
+                        logger.Debug(
                             "[CandidateDiscoverer] No item pool for MediaType='{0}' — skipping member '{1}'",
                             mediaType, missingEntry.Member?.Name ?? "(null)");
                         continue;
@@ -99,12 +99,12 @@ namespace ListProtection.EntryPoints
                 {
                     existing.Sort((a, b) => b.Score.CompareTo(a.Score));
                     plugin.CandidateStore.Save(existing);
-                    logger.Info("[CandidateDiscoverer] Discovery complete — store updated");
+                    logger.Debug("[CandidateDiscoverer] Discovery complete — store updated");
                     WriteCandidateFoundEvents(existing, gtStore, plugin, logger);
                 }
                 else
                 {
-                    logger.Info("[CandidateDiscoverer] Discovery complete — no changes");
+                    logger.Debug("[CandidateDiscoverer] Discovery complete — no changes");
                 }
             }
             catch (Exception ex)
@@ -124,7 +124,7 @@ namespace ListProtection.EntryPoints
         {
             var member = missingEntry.Member;
 
-            logger.Info(
+            logger.Debug(
                 "[CandidateDiscoverer] Processing missing member: '{0}' | InternalId={1} | MediaType={2} | playlist='{3}' ({4})",
                 member.Name, member.InternalId, mediaType,
                 missingEntry.ListName, missingEntry.PlaylistId);
@@ -178,7 +178,7 @@ namespace ListProtection.EntryPoints
                         changed = true;
                         candidatesUpdated++;
 
-                        logger.Info(
+                        logger.Debug(
                             "[CandidateDiscoverer]   Updated candidate '{0}' | InternalId={1} | Score→{2} (C={3} L={4} F={5})",
                             item.Name, item.InternalId, result.CompositeScore,
                             result.ContentScore, result.LocationScore, result.FallbackScore);
@@ -227,14 +227,14 @@ namespace ListProtection.EntryPoints
                 candidatesFound++;
                 changed = true;
 
-                logger.Info(
+                logger.Debug(
                     "[CandidateDiscoverer]   Candidate recorded: '{0}' | InternalId={1} | Score={2} (C={3} L={4} F={5}) | Signals=[{6}]",
                     item.Name, item.InternalId, result.CompositeScore,
                     result.ContentScore, result.LocationScore, result.FallbackScore,
                     string.Join(", ", result.MatchedSignals));
             }
 
-            logger.Info(
+            logger.Debug(
                 "[CandidateDiscoverer]   Done — {0} new, {1} updated candidate(s) for '{2}'",
                 candidatesFound, candidatesUpdated, member.Name);
         }
@@ -265,7 +265,7 @@ namespace ListProtection.EntryPoints
                 Recursive = true
             });
 
-            logger.Info(
+            logger.Debug(
                 "[CandidateDiscoverer] Queried MediaType='{0}' — {1} item(s)",
                 mediaType, pool?.Length ?? 0);
 

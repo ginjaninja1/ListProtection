@@ -33,7 +33,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[GroundTruthStore] Store file: {0}", _filePath);
+            _logger.Debug("[GroundTruthStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -48,7 +48,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[GroundTruthStore] No store file found — returning empty dictionary");
+                        _logger.Debug("[GroundTruthStore] No store file found — returning empty dictionary");
                         return new Dictionary<string, GroundTruthEntry>(StringComparer.OrdinalIgnoreCase);
                     }
 
@@ -56,7 +56,7 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var entries = data?.Entries ?? new Dictionary<string, GroundTruthEntry>();
-                        _logger.Info("[GroundTruthStore] Loaded {0} entr(ies)", entries.Count);
+                        _logger.Debug("[GroundTruthStore] Loaded {0} entr(ies)", entries.Count);
                         return entries;
                     }
                 }
@@ -85,7 +85,7 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[GroundTruthStore] Saved {0} entr(ies)", entries.Count);
+                    _logger.Debug("[GroundTruthStore] Saved {0} entr(ies)", entries.Count);
                 }
                 catch (Exception ex)
                 {

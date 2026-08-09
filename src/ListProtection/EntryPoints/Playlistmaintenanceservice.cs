@@ -66,7 +66,7 @@ namespace ListProtection.EntryPoints
         {
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
-            _logger = logManager.GetLogger(nameof(PlaylistMaintenanceService));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public void Run()
@@ -76,7 +76,7 @@ namespace ListProtection.EntryPoints
             _playlistManager.PlaylistItemsRemoved += OnPlaylistItemsRemoved;
             _playlistManager.PlaylistItemsMoved += OnPlaylistItemsMoved;
 
-            _logger.Info("[PlaylistMaintenanceService] Subscribed to playlist events");
+            _logger.Debug("[PlaylistMaintenanceService] Subscribed to playlist events");
         }
 
         // ── PlaylistItemsAdded ─────────────────────────────────────────────
@@ -105,7 +105,7 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistMaintenanceService] PlaylistItemsAdded — protected playlist '{0}' ({1}) | {2} item(s) — queuing readback",
                 playlist.Name ?? "(null)",
                 playlistIdN,
@@ -133,7 +133,7 @@ namespace ListProtection.EntryPoints
 
             var playlistIdN = playlist.Id.ToString("N");
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistMaintenanceService] ItemUpdated — readback for playlist '{0}' ({1}) | expecting {2} new member(s)",
                 playlist.Name ?? "(null)",
                 playlistIdN,
@@ -193,7 +193,7 @@ namespace ListProtection.EntryPoints
 
                         if (alreadyPresent)
                         {
-                            _logger.Info(
+                            _logger.Debug(
                                 "[PlaylistMaintenanceService] Member ListItemEntryId={0} already in ground truth for playlist {1} — skipping",
                                 item.ListItemEntryId,
                                 playlistIdN);
@@ -213,24 +213,22 @@ namespace ListProtection.EntryPoints
                         addedMembers.Add(newMember);
 
                         _logger.Info(
-                            "[PlaylistMaintenanceService] Added member '{0}' | InternalId={1} | ListItemEntryId={2} | playlist={3}",
+                            "[List Protection] Added '{0}' to '{1}'",
                             item.Name ?? "(null)",
-                            item.InternalId,
-                            item.ListItemEntryId,
-                            playlistIdN);
+                            playlist.Name ?? "(unnamed)");
                     }
 
                     if (addedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
-                        _logger.Info(
+                        _logger.Debug(
                             "[PlaylistMaintenanceService] Saved {0} new member(s) to ground truth for playlist {1}",
                             addedMembers.Count,
                             playlistIdN);
                     }
                     else
                     {
-                        _logger.Info(
+                        _logger.Debug(
                             "[PlaylistMaintenanceService] No new members matched pending add list for playlist {0} — store unchanged",
                             playlistIdN);
                     }
@@ -275,7 +273,7 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistMaintenanceService] PlaylistItemsRemoved — protected playlist '{0}' ({1}) | {2} entry id(s) to remove",
                 playlist.Name ?? "(null)",
                 playlistIdN,
@@ -309,10 +307,9 @@ namespace ListProtection.EntryPoints
                                 continue;
 
                             _logger.Info(
-                                "[PlaylistMaintenanceService] Removing member '{0}' | ListItemEntryId={1} | playlist={2}",
+                                "[List Protection] Removed '{0}' from '{1}'",
                                 entry.Members[i].Name ?? "(null)",
-                                entryId,
-                                playlistIdN);
+                                playlist.Name ?? "(unnamed)");
 
                             removedMembers.Add(entry.Members[i]);
                             entry.Members.RemoveAt(i);
@@ -323,7 +320,7 @@ namespace ListProtection.EntryPoints
                     if (removedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
-                        _logger.Info(
+                        _logger.Debug(
                             "[PlaylistMaintenanceService] Removed {0} member(s) from ground truth for playlist {1}",
                             removedMembers.Count,
                             playlistIdN);
@@ -375,7 +372,7 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistMaintenanceService] PlaylistItemsMoved — protected playlist '{0}' ({1}) | {2} entry id(s) moving to index {3}",
                 playlist.Name ?? "(null)",
                 playlistIdN,
@@ -436,10 +433,9 @@ namespace ListProtection.EntryPoints
                     plugin.GroundTruthStore.Save(entries);
 
                     _logger.Info(
-                        "[PlaylistMaintenanceService] Reordered {0} member(s) to index {1} in ground truth for playlist {2}",
+                        "[List Protection] Reordered {0} member(s) in '{1}'",
                         moving.Count,
-                        insertAt,
-                        playlistIdN);
+                        playlist.Name ?? "(unnamed)");
                 }
                 finally
                 {
@@ -504,7 +500,7 @@ namespace ListProtection.EntryPoints
             _playlistManager.PlaylistItemsRemoved -= OnPlaylistItemsRemoved;
             _playlistManager.PlaylistItemsMoved -= OnPlaylistItemsMoved;
 
-            _logger.Info("[PlaylistMaintenanceService] Disposed — unsubscribed from all events");
+            _logger.Debug("[PlaylistMaintenanceService] Disposed — unsubscribed from all events");
         }
     }
 }

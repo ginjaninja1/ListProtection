@@ -51,7 +51,7 @@ namespace ListProtection.EntryPoints
         {
             _libraryManager = libraryManager;
             _collectionManager = collectionManager;
-            _logger = logManager.GetLogger(nameof(CollectionMaintenanceService));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public void Run()
@@ -59,7 +59,7 @@ namespace ListProtection.EntryPoints
             _collectionManager.ItemsAddedToCollection += OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection += OnItemsRemovedFromCollection;
 
-            _logger.Info("[CollectionMaintenanceService] Subscribed to collection events");
+            _logger.Debug("[CollectionMaintenanceService] Subscribed to collection events");
         }
 
         // ── ItemsAddedToCollection ───────────────────────────────────────────
@@ -86,7 +86,7 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[CollectionMaintenanceService] ItemsAddedToCollection — protected collection '{0}' ({1}) | {2} item(s)",
                 collection.Name ?? "(null)",
                 collectionIdN,
@@ -124,7 +124,7 @@ namespace ListProtection.EntryPoints
 
                         if (alreadyPresent)
                         {
-                            _logger.Info(
+                            _logger.Debug(
                                 "[CollectionMaintenanceService] Member InternalId={0} already in ground truth for collection {1} — skipping",
                                 internalId,
                                 collectionIdN);
@@ -146,23 +146,22 @@ namespace ListProtection.EntryPoints
                         addedMembers.Add(member);
 
                         _logger.Info(
-                            "[CollectionMaintenanceService] Added member '{0}' | InternalId={1} | collection={2}",
+                            "[List Protection] Added '{0}' to '{1}'",
                             item.Name ?? "(null)",
-                            internalId,
-                            collectionIdN);
+                            collection.Name ?? "(unnamed)");
                     }
 
                     if (addedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
-                        _logger.Info(
+                        _logger.Debug(
                             "[CollectionMaintenanceService] Saved {0} new member(s) to ground truth for collection {1}",
                             addedMembers.Count,
                             collectionIdN);
                     }
                     else
                     {
-                        _logger.Info(
+                        _logger.Debug(
                             "[CollectionMaintenanceService] No new members added for collection {0} — store unchanged",
                             collectionIdN);
                     }
@@ -205,7 +204,7 @@ namespace ListProtection.EntryPoints
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[CollectionMaintenanceService] ItemsRemovedFromCollection — protected collection '{0}' ({1}) | {2} item(s)",
                 collection.Name ?? "(null)",
                 collectionIdN,
@@ -237,10 +236,9 @@ namespace ListProtection.EntryPoints
                                 continue;
 
                             _logger.Info(
-                                "[CollectionMaintenanceService] Removing member '{0}' | InternalId={1} | collection={2}",
+                                "[List Protection] Removed '{0}' from '{1}'",
                                 entry.Members[i].Name ?? "(null)",
-                                internalId,
-                                collectionIdN);
+                                collection.Name ?? "(unnamed)");
 
                             removedMembers.Add(entry.Members[i]);
                             entry.Members.RemoveAt(i);
@@ -251,7 +249,7 @@ namespace ListProtection.EntryPoints
                     if (removedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
-                        _logger.Info(
+                        _logger.Debug(
                             "[CollectionMaintenanceService] Removed {0} member(s) from ground truth for collection {1}",
                             removedMembers.Count,
                             collectionIdN);
@@ -325,7 +323,7 @@ namespace ListProtection.EntryPoints
             _collectionManager.ItemsAddedToCollection -= OnItemsAddedToCollection;
             _collectionManager.ItemsRemovedFromCollection -= OnItemsRemovedFromCollection;
 
-            _logger.Info("[CollectionMaintenanceService] Disposed — unsubscribed from all events");
+            _logger.Debug("[CollectionMaintenanceService] Disposed — unsubscribed from all events");
         }
     }
 }

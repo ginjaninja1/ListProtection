@@ -33,7 +33,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[CandidateStore] Store file: {0}", _filePath);
+            _logger.Debug("[CandidateStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -48,7 +48,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[CandidateStore] No store file found — returning empty list");
+                        _logger.Debug("[CandidateStore] No store file found — returning empty list");
                         return new List<CandidateEntry>();
                     }
 
@@ -56,7 +56,7 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var entries = data?.Entries ?? new List<CandidateEntry>();
-                        _logger.Info("[CandidateStore] Loaded {0} candidate entr(ies)", entries.Count);
+                        _logger.Debug("[CandidateStore] Loaded {0} candidate entr(ies)", entries.Count);
                         return entries;
                     }
                 }
@@ -85,7 +85,7 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[CandidateStore] Saved {0} candidate entr(ies)", entries.Count);
+                    _logger.Debug("[CandidateStore] Saved {0} candidate entr(ies)", entries.Count);
                 }
                 catch (Exception ex)
                 {

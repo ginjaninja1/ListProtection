@@ -38,7 +38,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[MissingMembersStore] Store file: {0}", _filePath);
+            _logger.Debug("[MissingMembersStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -53,7 +53,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[MissingMembersStore] No store file found — returning empty list");
+                        _logger.Debug("[MissingMembersStore] No store file found — returning empty list");
                         return new List<MissingMemberEntry>();
                     }
 
@@ -61,7 +61,7 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var entries = data?.Entries ?? new List<MissingMemberEntry>();
-                        _logger.Info("[MissingMembersStore] Loaded {0} record(s)", entries.Count);
+                        _logger.Debug("[MissingMembersStore] Loaded {0} record(s)", entries.Count);
                         return entries;
                     }
                 }
@@ -90,7 +90,7 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[MissingMembersStore] Saved {0} record(s)", entries.Count);
+                    _logger.Debug("[MissingMembersStore] Saved {0} record(s)", entries.Count);
                 }
                 catch (Exception ex)
                 {

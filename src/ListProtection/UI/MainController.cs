@@ -55,7 +55,7 @@ namespace ListProtection.UI
             _collectionManager = collectionManager;
             _userManager = userManager;
             _jsonSerializer = applicationHost.Resolve<IJsonSerializer>();
-            _logger = logManager.GetLogger(nameof(MainController));
+            _logger = logManager.GetLogger("List Protection");
 
             _repairService = new ListRepairService(
                 _missingMembersStore,

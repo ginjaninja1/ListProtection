@@ -66,7 +66,7 @@ namespace ListProtection.Tasks
         {
             _libraryManager = libraryManager;
             _applicationHost = applicationHost;
-            _logger = logManager.GetLogger(nameof(DiagnosticDumpTask));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         // Manual trigger only — no default schedule.
@@ -77,7 +77,7 @@ namespace ListProtection.Tasks
             try
             {
                 progress?.Report(0);
-                _logger.Info("[DiagnosticDumpTask] Starting dump");
+                _logger.Debug("[DiagnosticDumpTask] Starting dump");
 
                 var dump = new DumpResult
                 {
@@ -107,7 +107,7 @@ namespace ListProtection.Tasks
                         Members = liveMembers.Select(i => ToMemberDump(i, _logger, "[DiagnosticDumpTask][MemberIdentity][Playlist]")).ToList()
                     });
                 }
-                _logger.Info("[DiagnosticDumpTask] Playlists dumped: {0}", dump.Playlists.Count);
+                _logger.Debug("[DiagnosticDumpTask] Playlists dumped: {0}", dump.Playlists.Count);
 
                 cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report(33);
@@ -134,7 +134,7 @@ namespace ListProtection.Tasks
                         Members = liveMembers.Select(i => ToMemberDump(i, _logger, "[DiagnosticDumpTask][MemberIdentity][Collection]")).ToList()
                     });
                 }
-                _logger.Info("[DiagnosticDumpTask] Collections dumped: {0}", dump.Collections.Count);
+                _logger.Debug("[DiagnosticDumpTask] Collections dumped: {0}", dump.Collections.Count);
 
                 cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report(66);
@@ -153,7 +153,7 @@ namespace ListProtection.Tasks
                     if (member.Watch)
                         dump.WatchedLibraryAudio.Add(member);
                 }
-                _logger.Info(
+                _logger.Debug(
                     "[DiagnosticDumpTask] Library-wide Audio scanned: {0} item(s), {1} matched watch terms",
                     allAudio.Length, dump.WatchedLibraryAudio.Count);
 
@@ -162,11 +162,11 @@ namespace ListProtection.Tasks
 
                 // ── Log every watched record at Info level for quick tailing ──
                 foreach (var m in dump.Playlists.SelectMany(l => l.Members).Where(m => m.Watch))
-                    _logger.Info("[DiagnosticDumpTask][WATCH][Playlist] {0}", Describe(m));
+                    _logger.Debug("[DiagnosticDumpTask][WATCH][Playlist] {0}", Describe(m));
                 foreach (var m in dump.Collections.SelectMany(l => l.Members).Where(m => m.Watch))
-                    _logger.Info("[DiagnosticDumpTask][WATCH][Collection] {0}", Describe(m));
+                    _logger.Debug("[DiagnosticDumpTask][WATCH][Collection] {0}", Describe(m));
                 foreach (var m in dump.WatchedLibraryAudio)
-                    _logger.Info("[DiagnosticDumpTask][WATCH][LibraryAudio] {0}", Describe(m));
+                    _logger.Debug("[DiagnosticDumpTask][WATCH][LibraryAudio] {0}", Describe(m));
 
                 // ── Write JSON dump ───────────────────────────────────────
                 var jsonSerializer = _applicationHost.Resolve<IJsonSerializer>();
@@ -181,14 +181,14 @@ namespace ListProtection.Tasks
                     jsonSerializer.SerializeToStream(dump, stream, new JsonSerializerOptions { Indent = true });
                 }
 
-                _logger.Info("[DiagnosticDumpTask] Dump written to {0}", filePath);
+                _logger.Info("[List Protection] Diagnostic dump written to {0}", filePath);
                 progress?.Report(100);
 
                 return Task.CompletedTask;
             }
             catch (OperationCanceledException)
             {
-                _logger.Info("[DiagnosticDumpTask] Cancelled");
+                _logger.Debug("[DiagnosticDumpTask] Cancelled");
                 return Task.CompletedTask;
             }
             catch (Exception ex)

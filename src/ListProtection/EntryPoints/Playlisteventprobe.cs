@@ -31,12 +31,12 @@ namespace ListProtection.EntryPoints
             _libraryManager = libraryManager;
             _playlistManager = playlistManager;
             _providerManager = providerManager;
-            _logger = logManager.GetLogger(nameof(PlaylistEventProbe));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public void Run()
         {
-            _logger.Info("[PlaylistEventProbe] Subscribing to all library, playlist and provider events");
+            _logger.Debug("[PlaylistEventProbe] Subscribing to all library, playlist and provider events");
 
             _libraryManager.ItemAdding += OnItemAdding;
             _libraryManager.ItemAdded += OnItemAdded;
@@ -50,7 +50,7 @@ namespace ListProtection.EntryPoints
             _providerManager.RefreshStarted += OnRefreshStarted;
             _providerManager.RefreshCompleted += OnRefreshCompleted;
 
-            _logger.Info("[PlaylistEventProbe] Subscribed to 9 events — awaiting triggers");
+            _logger.Debug("[PlaylistEventProbe] Subscribed to 9 events — awaiting triggers");
         }
 
         // ── ILibraryManager ────────────────────────────────────────────────
@@ -72,7 +72,7 @@ namespace ListProtection.EntryPoints
             if (!_pendingAddedByPlaylistInternalId.TryRemove(internalId, out var pendingListItemIds))
                 return;
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistEventProbe] ItemUpdated — readback for playlist InternalId={0} Name={1}",
                 internalId, playlist.Name ?? "(null)");
 
@@ -82,13 +82,13 @@ namespace ListProtection.EntryPoints
 
                 if (result == null || result.Length == 0)
                 {
-                    _logger.Info("[PlaylistEventProbe] Readback — GetItemList returned empty");
+                    _logger.Debug("[PlaylistEventProbe] Readback — GetItemList returned empty");
                     return;
                 }
 
                 foreach (var item in result)
                 {
-                    _logger.Info(
+                    _logger.Debug(
                         "[PlaylistEventProbe] Readback member | InternalId={0} | ListItemEntryId={1} | Name={2} | IsPendingAdd={3}",
                         item.InternalId,
                         item.ListItemEntryId,
@@ -109,11 +109,11 @@ namespace ListProtection.EntryPoints
         {
             if (item == null)
             {
-                _logger.Info("[PlaylistEventProbe] {0} — item was null", eventName);
+                _logger.Debug("[PlaylistEventProbe] {0} — item was null", eventName);
                 return;
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistEventProbe] {0} | Type={1} | Name={2} | InternalId={3} | Id={4} | Path={5}",
                 eventName,
                 item.GetType().Name,
@@ -132,14 +132,14 @@ namespace ListProtection.EntryPoints
 
             if (e.ListItems == null || e.ListItems.Length == 0)
             {
-                _logger.Info("[PlaylistEventProbe] IPlaylistManager.PlaylistItemsAdded | {0} | ListItems=(empty)", label);
+                _logger.Debug("[PlaylistEventProbe] IPlaylistManager.PlaylistItemsAdded | {0} | ListItems=(empty)", label);
                 return;
             }
 
             var pendingIds = new List<long>();
             foreach (var item in e.ListItems)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[PlaylistEventProbe] IPlaylistManager.PlaylistItemsAdded | {0} | ListItemEntryId={1} | ListItemId={2}",
                     label, item.ListItemEntryId, item.ListItemId);
                 pendingIds.Add(item.ListItemId);
@@ -160,13 +160,13 @@ namespace ListProtection.EntryPoints
 
             if (e.ListItemEntryIds == null || e.ListItemEntryIds.Length == 0)
             {
-                _logger.Info("[PlaylistEventProbe] IPlaylistManager.PlaylistItemsRemoved | {0} | ListItemEntryIds=(empty)", label);
+                _logger.Debug("[PlaylistEventProbe] IPlaylistManager.PlaylistItemsRemoved | {0} | ListItemEntryIds=(empty)", label);
                 return;
             }
 
             foreach (var entryId in e.ListItemEntryIds)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[PlaylistEventProbe] IPlaylistManager.PlaylistItemsRemoved | {0} | ListItemEntryId={1}",
                     label, entryId);
             }
@@ -178,7 +178,7 @@ namespace ListProtection.EntryPoints
 
             if (e.ListItemEntryIds == null || e.ListItemEntryIds.Length == 0)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[PlaylistEventProbe] IPlaylistManager.PlaylistItemsMoved | {0} | ListItemEntryIds=(empty) | NewIndex={1}",
                     label, e.NewIndex);
                 return;
@@ -186,7 +186,7 @@ namespace ListProtection.EntryPoints
 
             foreach (var entryId in e.ListItemEntryIds)
             {
-                _logger.Info(
+                _logger.Debug(
                     "[PlaylistEventProbe] IPlaylistManager.PlaylistItemsMoved | {0} | ListItemEntryId={1} | NewIndex={2}",
                     label, entryId, e.NewIndex);
             }
@@ -196,7 +196,7 @@ namespace ListProtection.EntryPoints
 
         private void OnRefreshStarted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistEventProbe] IProviderManager.RefreshStarted | Item={0} | Type={1} | Progress={2}",
                 e?.Argument?.Item?.Name ?? "(null)",
                 e?.Argument?.Item?.GetType().Name ?? "(null)",
@@ -205,7 +205,7 @@ namespace ListProtection.EntryPoints
 
         private void OnRefreshCompleted(object sender, GenericEventArgs<RefreshProgressInfo> e)
         {
-            _logger.Info(
+            _logger.Debug(
                 "[PlaylistEventProbe] IProviderManager.RefreshCompleted | Item={0} | Type={1} | Progress={2}",
                 e?.Argument?.Item?.Name ?? "(null)",
                 e?.Argument?.Item?.GetType().Name ?? "(null)",
@@ -237,7 +237,7 @@ namespace ListProtection.EntryPoints
             _providerManager.RefreshStarted -= OnRefreshStarted;
             _providerManager.RefreshCompleted -= OnRefreshCompleted;
 
-            _logger.Info("[PlaylistEventProbe] Disposed — unsubscribed from all 9 events");
+            _logger.Debug("[PlaylistEventProbe] Disposed — unsubscribed from all 9 events");
         }
     }
 }

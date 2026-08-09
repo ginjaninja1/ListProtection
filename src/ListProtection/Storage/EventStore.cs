@@ -37,7 +37,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[EventStore] Store file: {0}", _filePath);
+            _logger.Debug("[EventStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -52,7 +52,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[EventStore] No store file found — returning empty list");
+                        _logger.Debug("[EventStore] No store file found — returning empty list");
                         return new List<EventEntry>();
                     }
 
@@ -60,7 +60,7 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var entries = data?.Entries ?? new List<EventEntry>();
-                        _logger.Info("[EventStore] Loaded {0} event(s)", entries.Count);
+                        _logger.Debug("[EventStore] Loaded {0} event(s)", entries.Count);
                         return entries;
                     }
                 }
@@ -108,7 +108,7 @@ namespace ListProtection.Storage
 
                     Save(entries);
 
-                    _logger.Info(
+                    _logger.Debug(
                         "[EventStore] Appended event | type={0} | playlist={1}",
                         entry.EventType ?? "(null)", entry.ListName ?? "(null)");
                 }

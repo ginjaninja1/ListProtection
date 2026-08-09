@@ -32,7 +32,7 @@ namespace ListProtection.Services
             IUserManager userManager,
             ILogger logger)
         {
-            logger.Info(
+            logger.Debug(
                 "[AutoRepairer] RunAutoRepair starting | target={0}",
                 targetPlaylistIdN ?? "ALL");
 
@@ -48,7 +48,7 @@ namespace ListProtection.Services
                 var config = plugin.Configuration;
                 if (config == null || !config.AutoRepairEnabled)
                 {
-                    logger.Info("[AutoRepairer] Auto-repair is disabled — skipping");
+                    logger.Debug("[AutoRepairer] Auto-repair is disabled — skipping");
                     return;
                 }
 
@@ -60,7 +60,7 @@ namespace ListProtection.Services
 
                 if (missing == null || missing.Count == 0)
                 {
-                    logger.Info("[AutoRepairer] No missing members — nothing to repair");
+                    logger.Debug("[AutoRepairer] No missing members — nothing to repair");
                     return;
                 }
 
@@ -71,7 +71,7 @@ namespace ListProtection.Services
 
                 if (relevantMissing.Count == 0)
                 {
-                    logger.Info("[AutoRepairer] No missing members for target playlist — nothing to repair");
+                    logger.Debug("[AutoRepairer] No missing members for target playlist — nothing to repair");
                     return;
                 }
 
@@ -95,7 +95,7 @@ namespace ListProtection.Services
 
                     if (!_eligibilityGates.TryGetValue(mediaType, out var gate))
                     {
-                        logger.Info(
+                        logger.Debug(
                             "[AutoRepairer] No eligibility gate for MediaType='{0}' — skipping '{1}'",
                             mediaType, record.Member.Name ?? "(unnamed)");
                         continue;
@@ -114,7 +114,7 @@ namespace ListProtection.Services
 
                     if (rankedCandidates.Count == 0)
                     {
-                        logger.Info(
+                        logger.Debug(
                             "[AutoRepairer] No resolvable candidates for '{0}' — skipping",
                             record.Member.Name ?? "(unnamed)");
                         continue;
@@ -122,7 +122,7 @@ namespace ListProtection.Services
 
                     if (!gate.IsEligible(record.Member, rankedCandidates, threshold, minDistance))
                     {
-                        logger.Info(
+                        logger.Debug(
                             "[AutoRepairer] Eligibility gate rejected '{0}' (top score={1}, candidates={2})",
                             record.Member.Name ?? "(unnamed)",
                             rankedCandidates[0].Score,
@@ -132,7 +132,7 @@ namespace ListProtection.Services
 
                     var chosen = rankedCandidates[0];
 
-                    logger.Info(
+                    logger.Debug(
                         "[AutoRepairer] Queuing auto-repair | member='{0}' → candidate='{1}' | score={2}",
                         record.Member.Name ?? "(unnamed)",
                         chosen.Entry.CandidateName ?? "(unnamed)",
@@ -165,7 +165,7 @@ namespace ListProtection.Services
 
                 if (repairRows.Count == 0)
                 {
-                    logger.Info("[AutoRepairer] No repairs to execute — done");
+                    logger.Debug("[AutoRepairer] No repairs to execute — done");
                     return;
                 }
 
@@ -200,7 +200,7 @@ namespace ListProtection.Services
                 foreach (var item in items)
                     lookup[item.InternalId] = item;
 
-                logger.Info(
+                logger.Debug(
                     "[AutoRepairer] Resolved {0}/{1} candidate item(s) from library",
                     lookup.Count, uniqueIds.Length);
             }

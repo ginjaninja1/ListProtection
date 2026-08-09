@@ -42,7 +42,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[ConsistencyCheckStatusStore] Store file: {0}", _filePath);
+            _logger.Debug("[ConsistencyCheckStatusStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -92,7 +92,7 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[ConsistencyCheckStatusStore] Saved run: {0} ({1})", completedAtUtc, trigger);
+                    _logger.Debug("[ConsistencyCheckStatusStore] Saved run: {0} ({1})", completedAtUtc, trigger);
                 }
                 catch (Exception ex)
                 {

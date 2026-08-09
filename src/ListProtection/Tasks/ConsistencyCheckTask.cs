@@ -38,18 +38,18 @@ namespace ListProtection.Tasks
             _playlistManager = playlistManager;
             _collectionManager = collectionManager;
             _userManager = userManager;
-            _logger = logManager.GetLogger(nameof(ConsistencyCheckTask));
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public Task Run(IProgress<double> progress, CancellationToken cancellationToken)
         {
-            _logger.Info("[ConsistencyCheckTask] Post-scan trigger");
+            _logger.Debug("[ConsistencyCheckTask] Post-scan trigger");
             return RunPipeline(progress, cancellationToken, ConsistencyCheckTrigger.PostScan);
         }
 
         public Task Execute(CancellationToken cancellationToken, IProgress<double> progress)
         {
-            _logger.Info("[ConsistencyCheckTask] Scheduled/manual trigger");
+            _logger.Debug("[ConsistencyCheckTask] Scheduled/manual trigger");
             return RunPipeline(progress, cancellationToken, ConsistencyCheckTrigger.ScheduledOrManual);
         }
 
@@ -91,7 +91,7 @@ namespace ListProtection.Tasks
                 }
             }
 
-            _logger.Info(
+            _logger.Debug(
                 "[ConsistencyCheckTask] Member identity logged for {0} list(s), {1} member(s)",
                 entries.Count, memberCount);
         }
@@ -102,25 +102,25 @@ namespace ListProtection.Tasks
             {
                 progress?.Report(0);
 
-                _logger.Info("[ConsistencyCheckTask] Step 1/4 — Logging ground truth member identity");
+                _logger.Debug("[ConsistencyCheckTask] Step 1/4 — Logging ground truth member identity");
                 LogAllMemberIdentities();
                 progress?.Report(20);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger.Info("[ConsistencyCheckTask] Step 2/4 — Detecting missing members");
+                _logger.Debug("[ConsistencyCheckTask] Step 2/4 — Detecting missing members");
                 MissingMemberDetector.RunDetection(null, _libraryManager, _logger);
                 progress?.Report(45);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger.Info("[ConsistencyCheckTask] Step 3/4 — Discovering candidates");
+                _logger.Debug("[ConsistencyCheckTask] Step 3/4 — Discovering candidates");
                 CandidateDiscoverer.RunDiscovery(null, _libraryManager, _logger);
                 progress?.Report(70);
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                _logger.Info("[ConsistencyCheckTask] Step 4/4 — Running auto-repair");
+                _logger.Debug("[ConsistencyCheckTask] Step 4/4 — Running auto-repair");
                 await AutoRepairer.RunAutoRepair(
                     null,
                     _libraryManager,
@@ -132,11 +132,11 @@ namespace ListProtection.Tasks
                 ListProtectionPlugin.Instance.ConsistencyStatusStore.Save(DateTime.UtcNow, trigger);
 
                 progress?.Report(100);
-                _logger.Info("[ConsistencyCheckTask] Complete");
+                _logger.Info("[List Protection] Consistency check complete");
             }
             catch (OperationCanceledException)
             {
-                _logger.Info("[ConsistencyCheckTask] Cancelled");
+                _logger.Debug("[ConsistencyCheckTask] Cancelled");
             }
             catch (Exception ex)
             {

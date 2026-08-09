@@ -17,7 +17,7 @@ namespace ListProtection
         public UserManagerProbeService(IUserManager userManager, ILogManager logManager)
         {
             _userManager = userManager;
-            _logger = logManager.GetLogger("ListProtection.UserManagerProbe");
+            _logger = logManager.GetLogger("List Protection");
         }
 
         public void Run()
@@ -25,12 +25,12 @@ namespace ListProtection
             try
             {
                 var users = _userManager.GetUserList(new UserQuery());
-                _logger.Info("[UserManagerProbe] GetUserList returned {0} user(s)", users.Length);
+                _logger.Debug("[UserManagerProbe] GetUserList returned {0} user(s)", users.Length);
 
                 foreach (var user in users)
                 {
                     var policy = _userManager.GetUserPolicy(user);
-                    _logger.Info(
+                    _logger.Debug(
                         "[UserManagerProbe] User | Name={0} | Id={1} | InternalId={2} | IsAdmin={3}",
                         user.Name,
                         user.Id,

@@ -34,7 +34,7 @@ namespace ListProtection.Storage
             Directory.CreateDirectory(dataFolder);
             _filePath = Path.Combine(dataFolder, pluginFullName + ".json");
 
-            _logger.Info("[ListManagementStore] Store file: {0}", _filePath);
+            _logger.Debug("[ListManagementStore] Store file: {0}", _filePath);
         }
 
         /// <summary>
@@ -49,7 +49,7 @@ namespace ListProtection.Storage
                 {
                     if (!_fileSystem.FileExists(_filePath))
                     {
-                        _logger.Info("[ListManagementStore] No store file found — returning empty set");
+                        _logger.Debug("[ListManagementStore] No store file found — returning empty set");
                         return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     }
 
@@ -57,7 +57,7 @@ namespace ListProtection.Storage
                     {
                         var data = _jsonSerializer.DeserializeFromStream<StoreData>(stream);
                         var ids = data?.ProtectedIds ?? new List<string>();
-                        _logger.Info("[ListManagementStore] Loaded {0} protected playlist ID(s)", ids.Count);
+                        _logger.Debug("[ListManagementStore] Loaded {0} protected playlist ID(s)", ids.Count);
                         return new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
                     }
                 }
@@ -86,7 +86,7 @@ namespace ListProtection.Storage
                         _jsonSerializer.SerializeToStream(data, stream, new JsonSerializerOptions { Indent = true });
                     }
 
-                    _logger.Info("[ListManagementStore] Saved {0} protected playlist ID(s)", protectedIds.Count);
+                    _logger.Debug("[ListManagementStore] Saved {0} protected playlist ID(s)", protectedIds.Count);
                 }
                 catch (Exception ex)
                 {

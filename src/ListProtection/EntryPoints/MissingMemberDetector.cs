@@ -30,7 +30,7 @@ namespace ListProtection.EntryPoints
             ILibraryManager libraryManager,
             ILogger logger)
         {
-            logger.Info(
+            logger.Debug(
                 "[MissingMemberDetector] RunDetection starting | target={0}",
                 targetListIdN ?? "ALL");
 
@@ -98,7 +98,7 @@ namespace ListProtection.EntryPoints
                             continue;
                         }
                         liveMembers = collection.GetItemList(new InternalItemsQuery());
-                        logger.Info("[MissingMemberDetector] Live readback for collection '{0}' — {1} member(s)",
+                        logger.Debug("[MissingMemberDetector] Live readback for collection '{0}' — {1} member(s)",
                             entry.ListName, liveMembers?.Length ?? 0);
                     }
                     else
@@ -111,7 +111,7 @@ namespace ListProtection.EntryPoints
                         }
                         // PROVEN: Playlist.GetItemList returns members in playlist order (ListItemOrder).
                         liveMembers = playlist.GetItemList(new InternalItemsQuery());
-                        logger.Info("[MissingMemberDetector] Live readback for playlist '{0}' — {1} member(s)",
+                        logger.Debug("[MissingMemberDetector] Live readback for playlist '{0}' — {1} member(s)",
                             entry.ListName, liveMembers?.Length ?? 0);
                     }
 
@@ -143,8 +143,8 @@ namespace ListProtection.EntryPoints
                             gtKnownIds.Add(liveItem.InternalId);
 
                             logger.Info(
-                                "[MissingMemberDetector] New live member found in collection '{0}' not yet in ground truth — added: '{1}' | InternalId={2}",
-                                entry.ListName, newMember.Name, newMember.InternalId);
+                                "[List Protection] '{0}' found already in '{1}' — added to protection",
+                                newMember.Name, entry.ListName);
 
                             newlyAddedMembers.Add((listIdN, entry.ListName, newMember));
                             groundTruthChanged = true;
@@ -157,8 +157,8 @@ namespace ListProtection.EntryPoints
                         if (liveIds.Contains(member.InternalId)) continue;
 
                         logger.Info(
-                            "[MissingMemberDetector] Member absent: '{0}' | InternalId={1} | pos={2} | list={3}",
-                            member.Name, member.InternalId, pos + 1, listIdN);
+                            "[List Protection] '{0}' is missing from '{1}'",
+                            member.Name, entry.ListName);
 
                         var alreadyRecorded = false;
                         foreach (var existing in missing)
@@ -269,7 +269,7 @@ namespace ListProtection.EntryPoints
 
                 if (!changed && !groundTruthChanged)
                 {
-                    logger.Info("[MissingMemberDetector] Detection complete — no new missing members found");
+                    logger.Debug("[MissingMemberDetector] Detection complete — no new missing members found");
                 }
             }
             catch (Exception ex)

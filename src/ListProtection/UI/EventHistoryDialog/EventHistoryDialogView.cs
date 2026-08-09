@@ -20,11 +20,15 @@ namespace ListProtection.UI.EventHistoryDialog
     /// which returns null, causing the framework to close the dialog.
     ///
     /// PayloadSummary wording by event type:
-    ///   Protect         — "X items protected"  (capped at first 10 in child grid)
-    ///   Unprotect       — "(no detail)"
-    ///   MissingDetected — "X item(s) missing"  or single item name inline
-    ///   CandidateFound  — "X candidate(s) found" or single item name inline
-    ///   Repair          — "X item(s) repaired"  or single item name inline
+    ///   Protect          — "X items protected"  (capped at first 10 in child grid)
+    ///   Unprotect        — "(no detail)"
+    ///   MissingDetected  — "X item(s) missing"  or single item name inline
+    ///   CandidateFound   — "X candidate(s) found" or single item name inline
+    ///   Repair           — "X item(s) repaired"  or single item name inline
+    ///   MemberAdded      — "X member(s) added"  or single item name inline
+    ///   MemberRemoved    — "X member(s) removed" or single item name inline
+    ///   MemberReordered  — "X member(s) reordered" or single item name inline
+    ///   GroundTruthUpdated — "X member(s) reconciled" or single item name inline
     ///
     /// Child grid always shows Pos | Item columns for all event types.
     /// </summary>
@@ -172,6 +176,10 @@ namespace ListProtection.UI.EventHistoryDialog
                 case "MissingDetected": return count + " item(s) missing";
                 case "CandidateFound": return count + " candidate(s) found";
                 case "Repair": return count + " item(s) repaired";
+                case "MemberAdded": return count + " member(s) added";
+                case "MemberRemoved": return count + " member(s) removed";
+                case "MemberReordered": return count + " member(s) reordered";
+                case "GroundTruthUpdated": return count + " member(s) reconciled";
                 default: return "Expand to see " + count + " items";
             }
         }

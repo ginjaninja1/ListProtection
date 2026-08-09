@@ -27,6 +27,11 @@ namespace ListProtection.EntryPoints
     ///   PlaylistItemsRemoved fires with ListItemEntryIds[] already populated.
     ///   Match against store, remove member, save.
     ///
+    /// Add/remove/move events are treated as benign/intentional — GT is updated
+    /// silently (no missing-member event raised). Each successful GT update is
+    /// logged to EventStore as MemberAdded / MemberRemoved / MemberReordered for
+    /// user visibility.
+    ///
     /// Repair suppression:
     ///   When ListRepairService is executing an atomic remove→add cycle it
     ///   registers the playlist InternalId in Plugin.RepairSuppressedLists.
@@ -153,6 +158,8 @@ namespace ListProtection.EntryPoints
                     return;
                 }
 
+                List<GroundTruthMember> addedMembers;
+
                 plugin.WriterLock.Wait();
                 try
                 {
@@ -166,7 +173,7 @@ namespace ListProtection.EntryPoints
                         return;
                     }
 
-                    var added = 0;
+                    addedMembers = new List<GroundTruthMember>();
 
                     foreach (var item in members)
                     {
@@ -193,14 +200,17 @@ namespace ListProtection.EntryPoints
                             continue;
                         }
 
-                        entry.Members.Add(new GroundTruthMember
+                        var newMember = new GroundTruthMember
                         {
                             InternalId = item.InternalId,
                             Id = item.Id.ToString("N"),
                             Name = item.Name ?? string.Empty,
                             Path = item.Path ?? string.Empty,
                             ListItemEntryId = item.ListItemEntryId
-                        });
+                        };
+
+                        entry.Members.Add(newMember);
+                        addedMembers.Add(newMember);
 
                         _logger.Info(
                             "[PlaylistMaintenanceService] Added member '{0}' | InternalId={1} | ListItemEntryId={2} | playlist={3}",
@@ -208,16 +218,14 @@ namespace ListProtection.EntryPoints
                             item.InternalId,
                             item.ListItemEntryId,
                             playlistIdN);
-
-                        added++;
                     }
 
-                    if (added > 0)
+                    if (addedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Info(
                             "[PlaylistMaintenanceService] Saved {0} new member(s) to ground truth for playlist {1}",
-                            added,
+                            addedMembers.Count,
                             playlistIdN);
                     }
                     else
@@ -231,6 +239,9 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.WriterLock.Release();
                 }
+
+                if (addedMembers.Count > 0)
+                    AppendMemberEvent("MemberAdded", playlistIdN, playlist.Name, addedMembers);
             }
             catch (Exception ex)
             {
@@ -272,6 +283,8 @@ namespace ListProtection.EntryPoints
 
             try
             {
+                List<GroundTruthMember> removedMembers;
+
                 plugin.WriterLock.Wait();
                 try
                 {
@@ -285,7 +298,7 @@ namespace ListProtection.EntryPoints
                         return;
                     }
 
-                    var removed = 0;
+                    removedMembers = new List<GroundTruthMember>();
 
                     foreach (var entryId in e.ListItemEntryIds)
                     {
@@ -301,21 +314,18 @@ namespace ListProtection.EntryPoints
                                 entryId,
                                 playlistIdN);
 
+                            removedMembers.Add(entry.Members[i]);
                             entry.Members.RemoveAt(i);
-                            removed++;
                             break; // ListItemEntryId is unique — stop after first match
                         }
-
-                        if (removed == 0 || entry.Members.Count == 0)
-                            continue;
                     }
 
-                    if (removed > 0)
+                    if (removedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Info(
                             "[PlaylistMaintenanceService] Removed {0} member(s) from ground truth for playlist {1}",
-                            removed,
+                            removedMembers.Count,
                             playlistIdN);
                     }
                     else
@@ -329,6 +339,9 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.WriterLock.Release();
                 }
+
+                if (removedMembers.Count > 0)
+                    AppendMemberEvent("MemberRemoved", playlistIdN, playlist.Name, removedMembers);
             }
             catch (Exception ex)
             {
@@ -371,6 +384,9 @@ namespace ListProtection.EntryPoints
 
             try
             {
+                List<GroundTruthMember> moving;
+                int insertAt;
+
                 plugin.WriterLock.Wait();
                 try
                 {
@@ -386,7 +402,7 @@ namespace ListProtection.EntryPoints
 
                     // Pull the moved members out (preserving their relative order),
                     // then reinsert as a contiguous block starting at NewIndex.
-                    var moving = new List<GroundTruthMember>();
+                    moving = new List<GroundTruthMember>();
 
                     foreach (var entryId in e.ListItemEntryIds)
                     {
@@ -414,7 +430,7 @@ namespace ListProtection.EntryPoints
                     foreach (var member in moving)
                         entry.Members.Remove(member);
 
-                    var insertAt = Math.Min(Math.Max(e.NewIndex, 0), entry.Members.Count);
+                    insertAt = Math.Min(Math.Max(e.NewIndex, 0), entry.Members.Count);
                     entry.Members.InsertRange(insertAt, moving);
 
                     plugin.GroundTruthStore.Save(entries);
@@ -429,6 +445,8 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.WriterLock.Release();
                 }
+
+                AppendMemberEvent("MemberReordered", playlistIdN, playlist.Name, moving);
             }
             catch (Exception ex)
             {
@@ -445,6 +463,36 @@ namespace ListProtection.EntryPoints
 
             var protectedIds = plugin.ListStore.Load();
             return protectedIds.Contains(playlistIdN);
+        }
+
+        /// <summary>
+        /// Appends a MemberAdded/MemberRemoved event entry for a batch of members,
+        /// matching the "Name | Path" payload convention used elsewhere in EventStore.
+        /// </summary>
+        private void AppendMemberEvent(string eventType, string listIdN, string listName, List<GroundTruthMember> members)
+        {
+            try
+            {
+                var plugin = ListProtectionPlugin.Instance;
+                if (plugin == null) return;
+
+                var payloadLines = new List<string>();
+                foreach (var member in members)
+                    payloadLines.Add((member.Name ?? "(unnamed)") + " | " + (member.Path ?? string.Empty));
+
+                plugin.EventStore.Append(new EventEntry
+                {
+                    EventType = eventType,
+                    PlaylistId = listIdN,
+                    ListName = listName ?? string.Empty,
+                    OccurredAt = DateTime.UtcNow,
+                    Payload = string.Join("\n", payloadLines)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[PlaylistMaintenanceService] Failed to write " + eventType + " event", ex);
+            }
         }
 
         // ── Cleanup ────────────────────────────────────────────────────────

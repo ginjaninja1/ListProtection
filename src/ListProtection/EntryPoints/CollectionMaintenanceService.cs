@@ -6,6 +6,7 @@ using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Logging;
 using System;
+using System.Collections.Generic;
 
 namespace ListProtection.EntryPoints
 {
@@ -25,6 +26,12 @@ namespace ListProtection.EntryPoints
     /// queue is needed. This also matches the item-side membership model already
     /// established in Evidence.md (collections have no ListItemEntryId concept —
     /// they're unordered sets of InternalIds).
+    ///
+    /// These add/remove events are treated as benign/intentional — GT is updated
+    /// silently (no missing-member event raised). Each successful GT update is
+    /// logged to EventStore as MemberAdded / MemberRemoved for user visibility.
+    /// Collections have no move/reorder concept (unordered sets — see Evidence.md),
+    /// so there is no MemberReordered equivalent here.
     ///
     /// Repair suppression reuses Plugin.RepairSuppressedLists (keyed by list
     /// InternalId — shared across playlists and collections).
@@ -88,6 +95,7 @@ namespace ListProtection.EntryPoints
             try
             {
                 plugin.WriterLock.Wait();
+                List<GroundTruthMember> addedMembers;
                 try
                 {
                     var entries = plugin.GroundTruthStore.Load();
@@ -100,7 +108,7 @@ namespace ListProtection.EntryPoints
                         return;
                     }
 
-                    var added = 0;
+                    addedMembers = new List<GroundTruthMember>();
 
                     foreach (var internalId in e.ItemsChanged)
                     {
@@ -135,22 +143,21 @@ namespace ListProtection.EntryPoints
 
                         var member = GroundTruthMemberFactory.FromItem(item);
                         entry.Members.Add(member);
+                        addedMembers.Add(member);
 
                         _logger.Info(
                             "[CollectionMaintenanceService] Added member '{0}' | InternalId={1} | collection={2}",
                             item.Name ?? "(null)",
                             internalId,
                             collectionIdN);
-
-                        added++;
                     }
 
-                    if (added > 0)
+                    if (addedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Info(
                             "[CollectionMaintenanceService] Saved {0} new member(s) to ground truth for collection {1}",
-                            added,
+                            addedMembers.Count,
                             collectionIdN);
                     }
                     else
@@ -164,6 +171,9 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.WriterLock.Release();
                 }
+
+                if (addedMembers.Count > 0)
+                    AppendMemberEvent("MemberAdded", collectionIdN, collection.Name, addedMembers);
             }
             catch (Exception ex)
             {
@@ -204,6 +214,7 @@ namespace ListProtection.EntryPoints
             try
             {
                 plugin.WriterLock.Wait();
+                List<GroundTruthMember> removedMembers;
                 try
                 {
                     var entries = plugin.GroundTruthStore.Load();
@@ -216,7 +227,7 @@ namespace ListProtection.EntryPoints
                         return;
                     }
 
-                    var removed = 0;
+                    removedMembers = new List<GroundTruthMember>();
 
                     foreach (var internalId in e.ItemsChanged)
                     {
@@ -231,18 +242,18 @@ namespace ListProtection.EntryPoints
                                 internalId,
                                 collectionIdN);
 
+                            removedMembers.Add(entry.Members[i]);
                             entry.Members.RemoveAt(i);
-                            removed++;
                             break; // InternalId is unique — stop after first match
                         }
                     }
 
-                    if (removed > 0)
+                    if (removedMembers.Count > 0)
                     {
                         plugin.GroundTruthStore.Save(entries);
                         _logger.Info(
                             "[CollectionMaintenanceService] Removed {0} member(s) from ground truth for collection {1}",
-                            removed,
+                            removedMembers.Count,
                             collectionIdN);
                     }
                     else
@@ -256,6 +267,9 @@ namespace ListProtection.EntryPoints
                 {
                     plugin.WriterLock.Release();
                 }
+
+                if (removedMembers.Count > 0)
+                    AppendMemberEvent("MemberRemoved", collectionIdN, collection.Name, removedMembers);
             }
             catch (Exception ex)
             {
@@ -272,6 +286,36 @@ namespace ListProtection.EntryPoints
 
             var protectedIds = plugin.ListStore.Load();
             return protectedIds.Contains(collectionIdN);
+        }
+
+        /// <summary>
+        /// Appends a MemberAdded/MemberRemoved event entry for a batch of members,
+        /// matching the "Name | Path" payload convention used elsewhere in EventStore.
+        /// </summary>
+        private void AppendMemberEvent(string eventType, string listIdN, string listName, List<GroundTruthMember> members)
+        {
+            try
+            {
+                var plugin = ListProtectionPlugin.Instance;
+                if (plugin == null) return;
+
+                var payloadLines = new List<string>();
+                foreach (var member in members)
+                    payloadLines.Add((member.Name ?? "(unnamed)") + " | " + (member.Path ?? string.Empty));
+
+                plugin.EventStore.Append(new EventEntry
+                {
+                    EventType = eventType,
+                    PlaylistId = listIdN,
+                    ListName = listName ?? string.Empty,
+                    OccurredAt = DateTime.UtcNow,
+                    Payload = string.Join("\n", payloadLines)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.ErrorException("[CollectionMaintenanceService] Failed to write " + eventType + " event", ex);
+            }
         }
 
         // ── Cleanup ────────────────────────────────────────────────────────

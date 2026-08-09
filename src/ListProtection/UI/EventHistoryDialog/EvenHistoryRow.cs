@@ -6,11 +6,15 @@ namespace ListProtection.UI.EventHistoryDialog
     /// Master row for the EventHistory grid.
     ///
     /// PayloadSummary — displayed in the master row:
-    ///   Protect:         "X items protected"
-    ///   Unprotect:       "(no detail)"
-    ///   MissingDetected: "X item(s) missing" or the single item name
-    ///   CandidateFound:  "X candidate(s) found" or the single item
-    ///   Repair:          "X item(s) repaired" or the single item
+    ///   Protect:            "X items protected"
+    ///   Unprotect:          "(no detail)"
+    ///   MissingDetected:    "X item(s) missing" or the single item name
+    ///   CandidateFound:     "X candidate(s) found" or the single item
+    ///   Repair:             "X item(s) repaired" or the single item
+    ///   MemberAdded:        "X member(s) added" or the single item name
+    ///   MemberRemoved:      "X member(s) removed" or the single item name
+    ///   MemberReordered:    "X member(s) reordered" or the single item name
+    ///   GroundTruthUpdated: "X member(s) reconciled" or the single item name
     ///   All multi-line events: expand to show detail rows.
     ///
     /// PayloadDetail[] — child grid rows (one per payload line).

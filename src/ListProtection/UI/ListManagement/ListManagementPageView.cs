@@ -61,7 +61,7 @@ namespace ListProtection.UI.ListManagement
 
         public override async Task<IPluginUIView> RunCommand(string itemId, string commandId, string data)
         {
-            _logger.Info("[ListManagementPageView] RunCommand | commandId={0}", commandId ?? "(null)");
+            _logger.Debug("[ListManagementPageView] RunCommand | commandId={0}", commandId ?? "(null)");
 
             try
             {

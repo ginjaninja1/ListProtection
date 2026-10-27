@@ -314,14 +314,48 @@ namespace ListProtection.EntryPoints
                     }
 
                     removedMembers = new List<GroundTruthMember>();
+                    // The removed rows are already absent from the live readback, so
+                    // reconciliation alone cannot recover a renumbered entry ID. First
+                    // map the event's pre-removal IDs through the last known GT mapping
+                    // to durable item IDs, then reconcile surviving rows by InternalId.
+                    var removedInternalIds = new HashSet<long>();
+                    foreach (var entryId in e.ListItemEntryIds)
+                    {
+                        for (var i = entry.Members.Count - 1; i >= 0; i--)
+                        {
+                            if (entry.Members[i].ListItemEntryId == entryId)
+                            {
+                                removedInternalIds.Add(entry.Members[i].InternalId);
+                                break;
+                            }
+                        }
+                    }
+
                     var reconciled = ReconcileEntryIds(playlist, entry, playlistIdN);
 
-                    foreach (var entryId in e.ListItemEntryIds)
+                    // If event IDs did not match (typically stale IDs after Emby
+                    // renumbered the playlist), the live readback provides the
+                    // authoritative set of surviving media IDs. Only consider GT
+                    // members absent from that set when event matching found nothing.
+                    if (removedInternalIds.Count == 0)
+                    {
+                        var liveMembers = playlist.GetItemList(new InternalItemsQuery());
+                        var liveInternalIds = new HashSet<long>();
+                        if (liveMembers != null)
+                            foreach (var liveMember in liveMembers)
+                                liveInternalIds.Add(liveMember.InternalId);
+
+                        foreach (var member in entry.Members)
+                            if (!liveInternalIds.Contains(member.InternalId))
+                                removedInternalIds.Add(member.InternalId);
+                    }
+
+                    foreach (var internalId in removedInternalIds)
                     {
                         // Iterate backwards — safe removal from List<T>
                         for (var i = entry.Members.Count - 1; i >= 0; i--)
                         {
-                            if (entry.Members[i].ListItemEntryId != entryId)
+                            if (entry.Members[i].InternalId != internalId)
                                 continue;
 
                             _logger.Info(

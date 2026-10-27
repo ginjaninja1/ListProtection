@@ -1,6 +1,7 @@
 ﻿using ListProtection.Scoring;
 using ListProtection.Storage;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Playlists;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Model.Logging;
 using System;
@@ -66,6 +67,46 @@ namespace ListProtection.EntryPoints
                     return;
                 }
 
+                // Read live playlist membership once per playlist. Ground truth represents
+                // intended membership, so it must not be used to exclude candidates: after
+                // a playlist wipe, the original library items remain in ground truth but
+                // are precisely the items discovery needs to offer again.
+                var liveMemberIdsByPlaylist = new Dictionary<string, HashSet<long>>(StringComparer.OrdinalIgnoreCase);
+                var resolvedPlaylistIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var targetListIds = missing
+                    .Where(m => targetPlaylistIdN == null || m.PlaylistId == targetPlaylistIdN)
+                    .Select(m => m.PlaylistId)
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                var allPlaylists = libraryManager.GetItemList(new InternalItemsQuery
+                {
+                    IncludeItemTypes = new[] { "Playlist" },
+                    Recursive = true
+                });
+
+                foreach (var listId in targetListIds)
+                {
+                    if (!Guid.TryParseExact(listId, "N", out var listGuid))
+                    {
+                        liveMemberIdsByPlaylist[listId] = new HashSet<long>();
+                        continue;
+                    }
+
+                    var playlist = allPlaylists?.OfType<Playlist>().FirstOrDefault(p => p.Id == listGuid);
+                    if (playlist != null)
+                        resolvedPlaylistIds.Add(listId);
+
+                    var liveIds = new HashSet<long>();
+                    if (playlist != null)
+                    {
+                        var liveMembers = playlist.GetItemList(new InternalItemsQuery());
+                        if (liveMembers != null)
+                            foreach (var liveMember in liveMembers)
+                                liveIds.Add(liveMember.InternalId);
+                    }
+                    liveMemberIdsByPlaylist[listId] = liveIds;
+                }
+
                 // Build item pool once per media type
                 var itemPoolByType = new Dictionary<string, BaseItem[]>(StringComparer.OrdinalIgnoreCase);
                 foreach (var missingEntry in missing)
@@ -92,7 +133,15 @@ namespace ListProtection.EntryPoints
                         continue;
                     }
 
-                    ProcessMissingMember(missingEntry, gtStore, pool, existing, mediaType, logger, ref changed);
+                    liveMemberIdsByPlaylist.TryGetValue(missingEntry.PlaylistId, out var liveMemberIds);
+                    if (!resolvedPlaylistIds.Contains(missingEntry.PlaylistId))
+                    {
+                        logger.Warn(
+                            "[CandidateDiscoverer] Playlist '{0}' could not be resolved — skipping candidate discovery for '{1}'",
+                            missingEntry.PlaylistId, missingEntry.Member?.Name ?? "(null)");
+                        continue;
+                    }
+                    ProcessMissingMember(missingEntry, liveMemberIds, pool, existing, mediaType, logger, ref changed);
                 }
 
                 if (changed)
@@ -115,7 +164,7 @@ namespace ListProtection.EntryPoints
 
         private static void ProcessMissingMember(
             MissingMemberEntry missingEntry,
-            Dictionary<string, GroundTruthEntry> gtStore,
+            HashSet<long> liveMemberIds,
             BaseItem[] pool,
             List<CandidateEntry> existing,
             string mediaType,
@@ -129,11 +178,6 @@ namespace ListProtection.EntryPoints
                 member.Name, member.InternalId, mediaType,
                 missingEntry.ListName, missingEntry.PlaylistId);
 
-            var excludedIds = new HashSet<long>();
-            if (gtStore.TryGetValue(missingEntry.PlaylistId, out var gtEntry) && gtEntry.Members != null)
-                foreach (var m in gtEntry.Members)
-                    excludedIds.Add(m.InternalId);
-
             var tier1Collector = GetTier1Collector(mediaType);
 
             var candidatesFound = 0;
@@ -141,8 +185,7 @@ namespace ListProtection.EntryPoints
 
             foreach (var item in pool)
             {
-                if (excludedIds.Contains(item.InternalId)) continue;
-                if (item.InternalId == member.InternalId) continue;
+                if (liveMemberIds != null && liveMemberIds.Contains(item.InternalId)) continue;
 
                 // ── Collect facts per tier ─────────────────────────────────
                 var tier1Facts = tier1Collector != null

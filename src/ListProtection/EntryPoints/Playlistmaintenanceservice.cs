@@ -1,4 +1,5 @@
 ﻿using ListProtection.Storage;
+using ListProtection.Services;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
@@ -219,14 +220,10 @@ namespace ListProtection.EntryPoints
                             continue;
                         }
 
-                        var newMember = new GroundTruthMember
-                        {
-                            InternalId = item.InternalId,
-                            Id = item.Id.ToString("N"),
-                            Name = item.Name ?? string.Empty,
-                            Path = item.Path ?? string.Empty,
-                            ListItemEntryId = item.ListItemEntryId
-                        };
+                        // Use the same complete metadata snapshot as every other capture
+                        // path. The playlist event readback supplies the authoritative
+                        // ListItemEntryId, which the factory also captures from this item.
+                        var newMember = GroundTruthMemberFactory.FromItem(item);
 
                         entry.Members.Add(newMember);
                         addedMembers.Add(newMember);
